@@ -76,6 +76,9 @@ Everyone can already sign in with username + password. To also allow the Google 
 
 ---
 
+## Map pins (dashboard map)
+In the admin site open **Map Pins**, choose a church from the list, then search its address or click the map, and press **Save pin**. Districts and clusters without their own pin are shown in the middle of their churches. The public map lets visitors click Cluster → District → Church.
+
 ## Who can do what
 
 | | Director | Cluster Coordinator | Public |

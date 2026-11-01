@@ -24,7 +24,8 @@ const SHEETS = {
   Clusters:  ['name'],
   Users:     ['id', 'username', 'email', 'name', 'role', 'cluster', 'salt', 'hash', 'active', 'mustChange', 'createdAt', 'lastLogin'],
   Settings:  ['key', 'value'],
-  Log:       ['time', 'user', 'action', 'detail']
+  Log:       ['time', 'user', 'action', 'detail'],
+  Places:    ['type', 'cluster', 'district', 'church', 'lat', 'lng', 'address', 'updatedAt', 'updatedBy']
 };
 
 const READ_ONLY = ['me', 'bootstrap', 'getCert', 'listUsers', 'getLog'];
@@ -47,7 +48,9 @@ const ACTIONS = {
   saveUser: saveUser_,
   deleteUser: deleteUser_,
   saveSettings: saveSettings_,
-  getLog: getLog_
+  getLog: getLog_,
+  savePlace: savePlace_,
+  deletePlace: deletePlace_
 };
 
 /* ============================== SETUP ============================== */
@@ -158,7 +161,9 @@ function publicData_() {
   });
   return {
     ok: true, title: s.siteTitle || '', subtitle: s.subtitle || '', showDocCount: showDocs, docsTotal: docs.length,
-    stages: stages, clusters: readAll_('Clusters').map(c => c.name), members: members, updated: nowStr_()
+    stages: stages, clusters: readAll_('Clusters').map(c => c.name), members: members,
+    places: readAll_('Places').map(p => ({ t: p.type, cl: p.cluster, di: p.district, ch: p.church, lat: Number(p.lat), lng: Number(p.lng) })),
+    updated: nowStr_()
   };
 }
 
@@ -270,6 +275,7 @@ function bootstrap_(u) {
     documents: sortedList_('Documents'),
     clusters: readAll_('Clusters').map(c => c.name),
     members: members,
+    places: placesFor_(u),
     settings: isDir_(u)
       ? { siteTitle: s.siteTitle || '', subtitle: s.subtitle || '', showDocCount: s.showDocCount !== 'false', googleClientId: s.googleClientId || '' }
       : { siteTitle: s.siteTitle || '' }
@@ -487,6 +493,7 @@ function saveClusters_(u, r) {
     if (Object.keys(renames).length) {
       renameColumn_('Members', 'cluster', renames);
       renameColumn_('Users', 'cluster', renames);
+      renameColumn_('Places', 'cluster', renames);
     }
     writeAll_('Clusters', items.map(x => ({ name: x.name })));
     log_(u, 'Update clusters', items.map(x => x.name).join(', '));
@@ -573,6 +580,47 @@ function deleteUser_(u, r) {
   });
 }
 
+/* ============================== MAP PINS ============================== */
+
+function placesFor_(u) {
+  return readAll_('Places').filter(p => isDir_(u) || p.cluster === u.cluster)
+    .map(p => ({ type: p.type, cluster: p.cluster, district: p.district, church: p.church, lat: Number(p.lat), lng: Number(p.lng), address: p.address }));
+}
+
+function placeKey_(u, p) {
+  const type = ['cluster', 'district', 'church'].indexOf(p.type) >= 0 ? p.type : '';
+  if (!type) throw new Error('Unknown place type.');
+  const cluster = clean_(p.cluster, 80);
+  const district = type !== 'cluster' ? clean_(p.district, 80) : '';
+  const church = type === 'church' ? clean_(p.church, 120) : '';
+  if (!cluster || (type !== 'cluster' && !district) || (type === 'church' && !church)) throw new Error('This place is missing its cluster, district or church name.');
+  if (!isDir_(u) && cluster !== u.cluster) throw new Error('You can only set map pins in ' + u.cluster + '.');
+  return { type: type, cluster: cluster, district: district, church: church };
+}
+
+function savePlace_(u, r) {
+  const p = r.place || {};
+  const k = placeKey_(u, p);
+  const lat = Number(p.lat), lng = Number(p.lng);
+  if (!isFinite(lat) || !isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) throw new Error('Invalid map location.');
+  return withLock_(() => {
+    const ex = readAll_('Places').find(x => x.type === k.type && x.cluster === k.cluster && x.district === k.district && x.church === k.church);
+    const rec = Object.assign({}, k, { lat: lat.toFixed(6), lng: lng.toFixed(6), address: clean_(p.address, 200), updatedAt: nowStr_(), updatedBy: u.username });
+    if (ex) updateRow_('Places', ex._row, rec); else appendRows_('Places', [rec]);
+    log_(u, 'Set map pin', [k.church, k.district, k.cluster].filter(Boolean).join(', '));
+    return { places: placesFor_(u) };
+  });
+}
+
+function deletePlace_(u, r) {
+  const k = placeKey_(u, r.place || {});
+  return withLock_(() => {
+    const ex = readAll_('Places').find(x => x.type === k.type && x.cluster === k.cluster && x.district === k.district && x.church === k.church);
+    if (ex) { sheet_('Places').deleteRow(ex._row); log_(u, 'Remove map pin', [k.church, k.district, k.cluster].filter(Boolean).join(', ')); }
+    return { places: placesFor_(u) };
+  });
+}
+
 /* ============================== SETTINGS & LOG ============================== */
 
 function saveSettings_(u, r) {
@@ -619,7 +667,13 @@ function setSetting_(k, v) {
 /* ============================== SHEET HELPERS ============================== */
 
 function sheet_(n) {
-  const s = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(n);
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let s = ss.getSheetByName(n);
+  if (!s && SHEETS[n] && n !== 'Members' && n !== 'Users') {   // add newer sheets automatically after an update
+    s = ss.insertSheet(n);
+    s.getRange(1, 1, 1, SHEETS[n].length).setValues([SHEETS[n]]).setFontWeight('bold');
+    s.setFrozenRows(1);
+  }
   if (!s) throw new Error('Missing sheet "' + n + '". Please run setup() first.');
   return s;
 }

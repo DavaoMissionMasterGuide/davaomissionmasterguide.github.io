@@ -5,5 +5,5 @@ window.MG_CONFIG = {
   API_URL: '',
   // Your Master Guide logo file (upload it next to index.html). PNG with transparent background looks best.
   LOGO: 'logo.png',
-  VERSION: 3   // raise this number after uploading a new logo
+  VERSION: 4   // raise this number after uploading a new logo
 };

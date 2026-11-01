@@ -5,8 +5,10 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Davao Mission Master Guides</title>
 <meta name="description" content="Master Guide progress and investiture registry of Davao Mission.">
-<link rel="stylesheet" href="style.css?v=3">
-<script src="config.js?v=3"></script>
+<link rel="icon" href="logo.png">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="style.css?v=4">
+<script src="config.js?v=4"></script>
 </head>
 <body class="public">
 <!-- ===== 5-second "classified file" intro ===== -->
@@ -32,7 +34,7 @@
 <header class="hero">
   <div class="wrap hero-row">
     <img class="mg-logo hero-logo" alt="Master Guide logo">
-    <div>
+    <div class="hero-text">
       <div class="eyebrow">Davao Mission</div>
       <h1 id="title">Master Guide Registry</h1>
       <p id="subtitle">Master Guide Progress &amp; Investiture Registry</p>
@@ -41,69 +43,76 @@
 </header>
 
 <main class="wrap">
-  <section class="stats" id="stats">
-    <div class="stat"><b>…</b><span>Loading</span></div>
+  <!-- KPIs -->
+  <section class="kpis" id="kpis">
+    <div class="kpi"><span class="k-label">Loading…</span><b>—</b></div>
   </section>
 
-  <section class="dash">
-    <div class="panel donut-panel">
-      <h2>Investiture rate</h2>
-      <div class="donut-wrap" id="donut"></div>
-    </div>
-    <div class="panel">
-      <h2>Progress pipeline <span class="muted small">(click a stage to filter)</span></h2>
-      <div class="funnel" id="stageFlow"></div>
-    </div>
-    <div class="panel">
-      <h2>Invested per year</h2>
-      <div class="years" id="years"></div>
+  <!-- Map + drill-down -->
+  <section class="section">
+    <div class="sec-head"><h2>Explore by location</h2><span class="muted small">Click a cluster, then a district, then a church.</span></div>
+    <div class="geo">
+      <div class="map-box"><div id="map"></div><div class="map-note" id="mapNote" hidden></div></div>
+      <aside class="drill" id="drill"></aside>
     </div>
   </section>
 
-  <section class="panel">
-    <h2>By cluster <span class="muted small">(invested / total · click to filter)</span></h2>
-    <div class="cluster-bars" id="clusterBars"></div>
+  <!-- Progress overview -->
+  <section class="section">
+    <div class="sec-head"><h2>Progress overview</h2></div>
+    <div class="overview">
+      <div class="panel">
+        <h3>Progress pipeline <span class="muted small">· click a stage to filter</span></h3>
+        <div class="funnel" id="stageFlow"></div>
+      </div>
+      <div class="panel">
+        <h3>Invested per year</h3>
+        <div class="years" id="years"></div>
+      </div>
+    </div>
   </section>
 
-  <h2 class="dir-title">Master Guide Directory</h2>
-
-  <section class="filters">
-    <input id="q" type="search" placeholder="Search a name or church…" aria-label="Search">
-    <select id="fCluster" aria-label="Cluster"></select>
-    <select id="fDistrict" aria-label="District"></select>
-    <select id="fChurch" aria-label="Church"></select>
-    <select id="fStage" aria-label="Stage"></select>
-    <select id="fSort" aria-label="Sort">
-      <option value="name">Sort: Name A–Z</option>
-      <option value="progress">Sort: Most progress</option>
-      <option value="invested">Sort: Recently invested</option>
-    </select>
+  <!-- Directory -->
+  <section class="section" id="directory">
+    <div class="sec-head"><h2>Master Guide directory</h2><button class="btn-link" id="clear" hidden>Clear filters</button></div>
+    <div class="filters">
+      <input id="q" type="search" placeholder="Search a name or church…" aria-label="Search">
+      <select id="fCluster" aria-label="Cluster"></select>
+      <select id="fDistrict" aria-label="District"></select>
+      <select id="fChurch" aria-label="Church"></select>
+      <select id="fStage" aria-label="Stage"></select>
+      <select id="fSort" aria-label="Sort">
+        <option value="name">Sort: Name A–Z</option>
+        <option value="progress">Sort: Most progress</option>
+        <option value="invested">Sort: Recently invested</option>
+      </select>
+    </div>
+    <div id="demo" class="notice" hidden>Showing <b>sample data</b> only. Put your Web App URL in <code>config.js</code> to show the real registry.</div>
+    <div class="result-meta"><span id="meta"></span></div>
+    <div id="list" class="cards"><div class="empty">Loading the registry…</div></div>
+    <nav id="pager" class="pager"></nav>
   </section>
-
-  <div id="demo" class="notice" hidden style="margin-top:14px">Showing <b>sample data</b> only. Put your Web App URL in <code>config.js</code> to show the real registry.</div>
-  <div class="result-meta"><span id="meta"></span><button class="btn-link" id="clear" hidden>Clear filters</button></div>
-  <section id="list" class="cards"><div class="empty">Loading the registry…</div></section>
-  <nav id="pager" class="pager"></nav>
 </main>
 
 <footer class="foot"><span id="updated"></span> · <a href="admin.html">Admin sign in</a></footer>
 
 <dialog id="dlg"></dialog>
 
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 (function () {
   const C = window.MG_CONFIG || {};
   const PER = 24;
+  const DEFAULT_VIEW = [7.2, 125.6], DEFAULT_ZOOM = 8;   // Davao Region
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const fmt = n => Number(n).toLocaleString('en-PH');
+  const uniq = arr => Array.from(new Set(arr.filter(Boolean))).sort((a, b) => a.localeCompare(b));
   let D = null, people = [], filtered = [], page = 1;
+  const drill = { cl: '', di: '', ch: '' };
 
-  /* ---------- logo (your file) with a plain fallback badge ---------- */
-  const FALLBACK_LOGO = 'data:image/svg+xml,' + encodeURIComponent(
-    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200"><circle cx="100" cy="100" r="94" fill="#3a4724" stroke="#c99a2e" stroke-width="8"/>' +
-    '<circle cx="100" cy="100" r="78" fill="none" stroke="#c99a2e" stroke-width="2" stroke-dasharray="4 6"/>' +
-    '<text x="100" y="122" text-anchor="middle" font-family="Georgia,serif" font-size="64" font-weight="700" fill="#f3d58a">MG</text></svg>');
+  /* ---------- logo ---------- */
+  const FALLBACK_LOGO = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200"><circle cx="100" cy="100" r="94" fill="#3a4724"/><text x="100" y="122" text-anchor="middle" font-family="Georgia,serif" font-size="64" font-weight="700" fill="#e7e2c4">MG</text></svg>');
   document.querySelectorAll('img.mg-logo').forEach(img => {
     img.onerror = () => { img.onerror = null; img.src = FALLBACK_LOGO; };
     img.src = (C.LOGO || 'logo.png') + '?v=' + (C.VERSION || 1);
@@ -120,7 +129,7 @@
     const done = () => {
       if (finished) return; finished = true;
       el.classList.add('out'); document.body.classList.remove('intro-on');
-      setTimeout(() => el.remove(), 800);
+      setTimeout(() => { el.remove(); if (window.__map) window.__map.invalidateSize(); }, 800);
     };
     const t0 = Date.now(), clock = setInterval(() => {
       const ms = Date.now() - t0;
@@ -160,10 +169,11 @@
         D = demoData();
         $('#demo').hidden = false;
       }
+      D.places = D.places || [];
       init();
     } catch (e) {
       console.error(e);
-      $('#stats').innerHTML = '';
+      $('#kpis').innerHTML = '';
       $('#list').innerHTML = '<div class="empty">Sorry, the registry could not be loaded right now. Please refresh the page or try again later.</div>';
     }
   }
@@ -172,99 +182,205 @@
     if (D.title) { $('#title').textContent = D.title; document.title = D.title; }
     if (D.subtitle !== undefined) $('#subtitle').textContent = D.subtitle;
     $('#updated').textContent = D.updated ? 'Updated ' + D.updated : '';
-    const N = D.stages.length;
-    const idx = {};
+    const N = D.stages.length, idx = {};
     D.stages.forEach((s, i) => idx[s.id] = i);
     people = D.members.map(m => {
       const si = idx[m.st] !== undefined ? idx[m.st] : -1;
-      const pct = N && si >= 0 ? Math.round((si + 1) / N * 100) : 0;
       return Object.assign({}, m, {
-        si: si, pct: pct, invested: N > 0 && si === N - 1,
-        stageName: si >= 0 ? D.stages[si].name : '—',
-        key: (m.n + ' ' + m.ch + ' ' + m.di + ' ' + m.cl).toLowerCase()
+        si: si, pct: N && si >= 0 ? Math.round((si + 1) / N * 100) : 0, invested: N > 0 && si === N - 1,
+        stageName: si >= 0 ? D.stages[si].name : '—', key: (m.n + ' ' + m.ch + ' ' + m.di + ' ' + m.cl).toLowerCase()
       });
     });
-    renderStats();
+    renderKpis(); renderPipeline(); renderYears();
+    initMap();
     fillFilters();
     ['#q', '#fCluster', '#fDistrict', '#fChurch', '#fStage', '#fSort'].forEach(id => {
-      $(id).addEventListener(id === '#q' ? 'input' : 'change', e => {
+      $(id).addEventListener(id === '#q' ? 'input' : 'change', () => {
         if (id === '#fCluster') { $('#fDistrict').value = ''; $('#fChurch').value = ''; }
         if (id === '#fDistrict') $('#fChurch').value = '';
         if (id === '#fCluster' || id === '#fDistrict') fillPlaces();
+        if (id === '#fCluster' || id === '#fDistrict' || id === '#fChurch') setDrill($('#fCluster').value, $('#fDistrict').value, $('#fChurch').value, { fromFilters: true });
         page = 1; apply();
       });
     });
-    $('#clear').onclick = () => { $('#q').value = ''; ['#fCluster', '#fDistrict', '#fChurch', '#fStage'].forEach(i => $(i).value = ''); fillPlaces(); page = 1; apply(); };
-    apply();
+    $('#clear').onclick = () => { $('#q').value = ''; $('#fStage').value = ''; setDrill('', '', ''); };
+    setDrill('', '', '', { noFit: false });
+    if (window.__introCount) window.__introCount(people.length);
   }
 
-  function renderStats() {
-    const total = people.length;
-    const inv = people.filter(p => p.invested).length;
-    $('#stats').innerHTML =
-      stat(fmt(total), 'Master Guides listed') +
-      stat(fmt(inv), 'Invested', 'gold') +
-      stat(fmt(total - inv), 'In progress') +
-      stat(fmt(D.clusters.length), 'Clusters');
-    const counts = D.stages.map((s, i) => people.filter(p => p.si === i).length);
-    const maxC = Math.max(1, ...counts);
+  /* ---------- KPIs ---------- */
+  function renderKpis() {
+    const total = people.length, inv = people.filter(p => p.invested).length, rate = total ? Math.round(inv / total * 100) : 0;
+    const churches = uniq(people.map(p => p.cl + '|' + p.di + '|' + p.ch)).length;
+    $('#kpis').innerHTML =
+      kpi('Master Guides listed', fmt(total), 'in ' + fmt(D.clusters.length) + ' clusters · ' + fmt(churches) + ' churches') +
+      kpi('Invested', fmt(inv), 'completed the full program', 'accent') +
+      kpi('In progress', fmt(total - inv), 'still working on requirements') +
+      '<div class="kpi kpi-ring"><div><span class="k-label">Investiture rate</span><b>' + rate + '%</b><small>of all listed</small></div>' + ring(rate, 64) + '</div>';
+  }
+  const kpi = (l, v, sub, cls) => '<div class="kpi ' + (cls || '') + '"><span class="k-label">' + l + '</span><b>' + v + '</b><small>' + sub + '</small></div>';
+  function ring(pct, size) {
+    const r = size / 2 - 6, c = 2 * Math.PI * r;
+    return '<svg class="ring" width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '"><circle cx="' + size / 2 + '" cy="' + size / 2 + '" r="' + r + '" class="r-bg"/>' +
+      '<circle cx="' + size / 2 + '" cy="' + size / 2 + '" r="' + r + '" class="r-fg" stroke-dasharray="' + (pct / 100 * c) + ' ' + c + '" transform="rotate(-90 ' + size / 2 + ' ' + size / 2 + ')"/></svg>';
+  }
+
+  /* ---------- pipeline & years ---------- */
+  function renderPipeline() {
+    const counts = D.stages.map((s, i) => people.filter(p => p.si === i).length), maxC = Math.max(1, ...counts);
     $('#stageFlow').innerHTML = D.stages.map((s, i) => {
       const last = i === D.stages.length - 1;
       return '<button class="stage-chip" data-stage="' + esc(s.id) + '"><span class="f-label">' + (i + 1) + '. ' + esc(s.name) + '</span>' +
-        '<span class="f-track"><span class="f-fill' + (last ? ' done' : '') + '" style="width:' + Math.max(2, counts[i] / maxC * 100) + '%"></span></span>' +
-        '<b>' + fmt(counts[i]) + '</b></button>';
+        '<span class="f-track"><span class="f-fill' + (last ? ' done' : '') + '" style="width:' + Math.max(2, counts[i] / maxC * 100) + '%"></span></span><b>' + fmt(counts[i]) + '</b></button>';
     }).join('') || '<span class="muted">No stages yet.</span>';
-
-    // donut: investiture rate
-    const rate = total ? inv / total : 0, R = 54, Cf = 2 * Math.PI * R;
-    $('#donut').innerHTML = '<svg viewBox="0 0 140 140" class="donut"><circle cx="70" cy="70" r="' + R + '" class="d-bg"/>' +
-      '<circle cx="70" cy="70" r="' + R + '" class="d-fg" stroke-dasharray="' + (rate * Cf) + ' ' + Cf + '" transform="rotate(-90 70 70)"/>' +
-      '<text x="70" y="68" class="d-num">' + Math.round(rate * 100) + '%</text><text x="70" y="88" class="d-sub">invested</text></svg>' +
-      '<div class="d-legend"><div><i class="dot-g"></i>Invested <b>' + fmt(inv) + '</b></div><div><i class="dot-n"></i>In progress <b>' + fmt(total - inv) + '</b></div></div>';
-
-    // invested per year (last 8 years that have data)
+    $('#stageFlow').onclick = e => {
+      const b = e.target.closest('.stage-chip'); if (!b) return;
+      $('#fStage').value = $('#fStage').value === b.dataset.stage ? '' : b.dataset.stage;
+      page = 1; apply(); $('#directory').scrollIntoView({ behavior: 'smooth' });
+    };
+  }
+  function renderYears() {
     const byYear = {};
     people.forEach(p => { if (p.invested && /^\d{4}/.test(p.inv || '')) { const y = p.inv.slice(0, 4); byYear[y] = (byYear[y] || 0) + 1; } });
     const yrs = Object.keys(byYear).sort().slice(-8), maxY = Math.max(1, ...yrs.map(y => byYear[y]));
     $('#years').innerHTML = yrs.length ? yrs.map(y => '<div class="ycol" title="' + y + ': ' + byYear[y] + ' invested"><b>' + fmt(byYear[y]) + '</b>' +
       '<span class="ybar" style="height:' + Math.max(4, byYear[y] / maxY * 100) + '%"></span><small>' + y + '</small></div>').join('')
       : '<span class="muted small">No investiture dates recorded yet.</span>';
-    if (window.__introCount) window.__introCount(total);
-    $('#stageFlow').onclick = e => {
-      const b = e.target.closest('.stage-chip'); if (!b) return;
-      $('#fStage').value = $('#fStage').value === b.dataset.stage ? '' : b.dataset.stage;
-      page = 1; apply();
-    };
-    $('#clusterBars').innerHTML = D.clusters.map(c => {
-      const all = people.filter(p => p.cl === c), inv = all.filter(p => p.invested).length;
-      const pct = all.length ? Math.round(inv / all.length * 100) : 0;
-      return '<div class="cbar" data-c="' + esc(c) + '"><div class="top"><b>' + esc(c) + '</b><span>' + fmt(inv) + ' / ' + fmt(all.length) + '</span></div>' +
-        '<div class="progress ' + (pct === 100 && all.length ? 'done' : '') + '"><span style="width:' + pct + '%"></span></div></div>';
-    }).join('') || '<span class="muted">No clusters yet.</span>';
-    $('#clusterBars').onclick = e => {
-      const b = e.target.closest('.cbar'); if (!b) return;
-      $('#fCluster').value = b.dataset.c; $('#fDistrict').value = ''; $('#fChurch').value = '';
-      fillPlaces(); page = 1; apply();
-      $('.filters').scrollIntoView({ behavior: 'smooth' });
-    };
   }
-  const stat = (v, l, cls) => '<div class="stat ' + (cls || '') + '"><b>' + v + '</b><span>' + l + '</span></div>';
 
+  /* ---------- map + drill-down ---------- */
+  let map = null, layer = null;
+  const P = { cluster: {}, district: {}, church: {} };   // saved pins
+  const kC = cl => cl, kD = (cl, di) => cl + '>' + di, kH = (cl, di, ch) => cl + '>' + di + '>' + ch;
+
+  function initMap() {
+    D.places.forEach(p => {
+      if (!isFinite(p.lat) || !isFinite(p.lng)) return;
+      if (p.t === 'cluster') P.cluster[kC(p.cl)] = [p.lat, p.lng];
+      if (p.t === 'district') P.district[kD(p.cl, p.di)] = [p.lat, p.lng];
+      if (p.t === 'church') P.church[kH(p.cl, p.di, p.ch)] = [p.lat, p.lng];
+    });
+    if (!window.L) { $('#mapNote').hidden = false; $('#mapNote').textContent = 'The map could not load. Check your internet connection.'; return; }
+    map = L.map('map', { scrollWheelZoom: false, zoomControl: true }).setView(DEFAULT_VIEW, DEFAULT_ZOOM);
+    window.__map = map;
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18, attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
+    layer = L.layerGroup().addTo(map);
+    map.on('click', () => map.scrollWheelZoom.enable());
+    if (!Object.keys(P.church).length && !Object.keys(P.district).length && !Object.keys(P.cluster).length) {
+      $('#mapNote').hidden = false;
+      $('#mapNote').innerHTML = 'Map pins are not set yet. An admin can add them in <b>Admin › Map Pins</b>.';
+    }
+  }
+
+  const avg = pts => pts.length ? [pts.reduce((s, p) => s + p[0], 0) / pts.length, pts.reduce((s, p) => s + p[1], 0) / pts.length] : null;
+  function posChurch(cl, di, ch) { return P.church[kH(cl, di, ch)] || null; }
+  function posDistrict(cl, di) {
+    return P.district[kD(cl, di)] || avg(uniq(people.filter(p => p.cl === cl && p.di === di).map(p => p.ch)).map(ch => posChurch(cl, di, ch)).filter(Boolean));
+  }
+  function posCluster(cl) {
+    return P.cluster[kC(cl)] || avg(uniq(people.filter(p => p.cl === cl).map(p => p.di)).map(di => posDistrict(cl, di)).filter(Boolean));
+  }
+  const stats = list => { const t = list.length, i = list.filter(p => p.invested).length; return { t: t, i: i, pct: t ? Math.round(i / t * 100) : 0 }; };
+
+  function children() {
+    // the items one level below the current selection
+    if (!drill.cl) return uniq(D.clusters.concat(people.map(p => p.cl))).map(cl => ({ level: 'cluster', name: cl, cl: cl, list: people.filter(p => p.cl === cl), pos: posCluster(cl) }));
+    if (!drill.di) return uniq(people.filter(p => p.cl === drill.cl).map(p => p.di)).map(di => ({ level: 'district', name: di, cl: drill.cl, di: di, list: people.filter(p => p.cl === drill.cl && p.di === di), pos: posDistrict(drill.cl, di) }));
+    return uniq(people.filter(p => p.cl === drill.cl && p.di === drill.di).map(p => p.ch)).map(ch => ({ level: 'church', name: ch, cl: drill.cl, di: drill.di, ch: ch, list: people.filter(p => p.cl === drill.cl && p.di === drill.di && p.ch === ch), pos: posChurch(drill.cl, drill.di, ch) }));
+  }
+
+  function setDrill(cl, di, ch, opt) {
+    opt = opt || {};
+    drill.cl = cl || ''; drill.di = drill.cl ? (di || '') : ''; drill.ch = drill.di ? (ch || '') : '';
+    if (!opt.fromFilters) {
+      $('#fCluster').value = drill.cl; fillPlaces();
+      $('#fDistrict').value = drill.di; fillPlaces();
+      $('#fChurch').value = drill.ch;
+      page = 1; apply();
+    }
+    renderDrill(); renderMarkers(opt.noFit);
+  }
+
+  function renderDrill() {
+    const crumbs = ['<button data-go="root">Davao Mission</button>'];
+    if (drill.cl) crumbs.push('<button data-go="cl">' + esc(drill.cl) + '</button>');
+    if (drill.di) crumbs.push('<button data-go="di">' + esc(drill.di) + '</button>');
+    if (drill.ch) crumbs.push('<span>' + esc(drill.ch) + '</span>');
+    const scope = people.filter(p => (!drill.cl || p.cl === drill.cl) && (!drill.di || p.di === drill.di) && (!drill.ch || p.ch === drill.ch));
+    const s = stats(scope);
+    const title = drill.ch || drill.di || drill.cl || 'Davao Mission';
+    const level = drill.ch ? 'Church' : drill.di ? 'District' : drill.cl ? 'Cluster' : 'Mission';
+    let body;
+    if (drill.ch) {
+      body = '<div class="d-list">' + scope.sort((a, b) => b.pct - a.pct || a.n.localeCompare(b.n)).slice(0, 12).map(p =>
+        '<div class="d-person"><span>' + esc(p.n) + '</span><span class="pill ' + (p.invested ? 'done' : '') + '">' + (p.invested ? 'Invested' : p.pct + '%') + '</span></div>').join('') + '</div>' +
+        '<button class="btn-primary d-see" id="dSee">See all ' + fmt(scope.length) + ' in the directory ↓</button>';
+    } else {
+      const kids = children().sort((a, b) => b.list.length - a.list.length);
+      const label = !drill.cl ? 'Clusters' : !drill.di ? 'Districts' : 'Churches';
+      body = '<div class="d-sub">' + label + ' <span class="muted">(' + kids.length + ')</span></div><div class="d-list">' + kids.map(k => {
+        const st = stats(k.list);
+        return '<button class="d-item" data-name="' + esc(k.name) + '"><span class="d-name">' + esc(k.name) + (k.pos ? '' : ' <i class="nopin" title="No map pin yet">◌</i>') + '</span>' +
+          '<span class="d-num">' + fmt(st.i) + ' / ' + fmt(st.t) + '</span><span class="d-bar"><span style="width:' + st.pct + '%"></span></span></button>';
+      }).join('') + '</div>';
+    }
+    $('#drill').innerHTML = '<nav class="crumbs">' + crumbs.join('<i>›</i>') + '</nav>' +
+      '<div class="d-head"><div><span class="k-label">' + level + '</span><h3>' + esc(title) + '</h3></div>' + ring(s.pct, 54) + '</div>' +
+      '<div class="d-stats"><div><b>' + fmt(s.t) + '</b><small>listed</small></div><div><b>' + fmt(s.i) + '</b><small>invested</small></div><div><b>' + s.pct + '%</b><small>rate</small></div></div>' + body;
+    $('#drill .crumbs').onclick = e => {
+      const b = e.target.closest('button[data-go]'); if (!b) return;
+      if (b.dataset.go === 'root') setDrill('', '', '');
+      if (b.dataset.go === 'cl') setDrill(drill.cl, '', '');
+      if (b.dataset.go === 'di') setDrill(drill.cl, drill.di, '');
+    };
+    $$('.d-item').forEach(b => b.onclick = () => go(b.dataset.name));
+    if ($('#dSee')) $('#dSee').onclick = () => $('#directory').scrollIntoView({ behavior: 'smooth' });
+  }
+  const $$ = s => Array.from(document.querySelectorAll(s));
+  function go(name) {
+    if (!drill.cl) setDrill(name, '', '');
+    else if (!drill.di) setDrill(drill.cl, name, '');
+    else setDrill(drill.cl, drill.di, name);
+  }
+
+  function renderMarkers(noFit) {
+    if (!map) return;
+    layer.clearLayers();
+    let items = children();
+    if (drill.ch) items = items.filter(k => k.name === drill.ch);
+    const pts = [];
+    const maxN = Math.max(1, ...items.map(k => k.list.length));
+    items.forEach(k => {
+      if (!k.pos) return;
+      const st = stats(k.list), size = Math.round(34 + 26 * Math.sqrt(k.list.length / maxN));
+      const icon = L.divIcon({
+        className: 'mk-wrap', iconSize: [size, size], iconAnchor: [size / 2, size / 2],
+        html: '<div class="mk ' + k.level + (drill.ch ? ' sel' : '') + '" style="width:' + size + 'px;height:' + size + 'px;--p:' + st.pct + '%"><span>' + fmt(st.t) + '</span></div><div class="mk-label">' + esc(k.name) + '</div>'
+      });
+      const m = L.marker(k.pos, { icon: icon, title: k.name, riseOnHover: true }).addTo(layer);
+      m.bindTooltip('<b>' + esc(k.name) + '</b><br>' + fmt(st.i) + ' invested of ' + fmt(st.t) + ' (' + st.pct + '%)', { direction: 'top', offset: [0, -size / 2] });
+      m.on('click', () => { if (!drill.ch) go(k.name); });
+      pts.push(k.pos);
+    });
+    if (noFit) return;
+    if (pts.length === 1) map.flyTo(pts[0], drill.ch ? 15 : drill.di ? 13 : drill.cl ? 11 : 10, { duration: .8 });
+    else if (pts.length) map.flyToBounds(L.latLngBounds(pts).pad(0.25), { duration: .8, maxZoom: 14 });
+    else if (!drill.cl) map.setView(DEFAULT_VIEW, DEFAULT_ZOOM);
+  }
+
+  /* ---------- directory ---------- */
   function opts(list, all) { return '<option value="">' + all + '</option>' + list.map(v => '<option>' + esc(v) + '</option>').join(''); }
-  const uniq = arr => Array.from(new Set(arr.filter(Boolean))).sort((a, b) => a.localeCompare(b));
-
   function fillFilters() {
-    $('#fCluster').innerHTML = opts(D.clusters, 'All clusters');
+    $('#fCluster').innerHTML = opts(uniq(D.clusters.concat(people.map(p => p.cl))), 'All clusters');
     $('#fStage').innerHTML = '<option value="">All stages</option>' + D.stages.map(s => '<option value="' + esc(s.id) + '">' + esc(s.name) + '</option>').join('');
     fillPlaces();
   }
   function fillPlaces() {
-    const c = $('#fCluster').value, d = $('#fDistrict').value;
+    const c = $('#fCluster').value, d = $('#fDistrict').value, ch = $('#fChurch').value;
     const inC = people.filter(p => !c || p.cl === c);
     $('#fDistrict').innerHTML = opts(uniq(inC.map(p => p.di)), 'All districts');
     $('#fDistrict').value = d;
     const inD = inC.filter(p => !$('#fDistrict').value || p.di === $('#fDistrict').value);
-    const ch = $('#fChurch').value;
     $('#fChurch').innerHTML = opts(uniq(inD.map(p => p.ch)), 'All churches');
     $('#fChurch').value = ch;
   }
@@ -273,16 +389,14 @@
     const q = $('#q').value.trim().toLowerCase();
     const c = $('#fCluster').value, d = $('#fDistrict').value, ch = $('#fChurch').value, st = $('#fStage').value;
     const words = q.split(/\s+/).filter(Boolean);
-    filtered = people.filter(p =>
-      (!c || p.cl === c) && (!d || p.di === d) && (!ch || p.ch === ch) && (!st || p.st === st) &&
-      words.every(w => p.key.indexOf(w) >= 0));
+    filtered = people.filter(p => (!c || p.cl === c) && (!d || p.di === d) && (!ch || p.ch === ch) && (!st || p.st === st) && words.every(w => p.key.indexOf(w) >= 0));
     const sort = $('#fSort').value;
     filtered.sort((a, b) => {
       if (sort === 'progress') return b.pct - a.pct || a.n.localeCompare(b.n);
       if (sort === 'invested') return (b.inv || '').localeCompare(a.inv || '') || a.n.localeCompare(b.n);
       return a.n.localeCompare(b.n);
     });
-    document.querySelectorAll('.stage-chip').forEach(b => b.classList.toggle('active', b.dataset.stage === st));
+    $$('.stage-chip').forEach(b => b.classList.toggle('active', b.dataset.stage === st));
     $('#clear').hidden = !(q || c || d || ch || st);
     render();
   }
@@ -291,14 +405,10 @@
     const pages = Math.max(1, Math.ceil(filtered.length / PER));
     if (page > pages) page = pages;
     const slice = filtered.slice((page - 1) * PER, page * PER);
-    $('#meta').textContent = filtered.length
-      ? 'Showing ' + fmt((page - 1) * PER + 1) + '–' + fmt((page - 1) * PER + slice.length) + ' of ' + fmt(filtered.length) + ' Master Guide' + (filtered.length === 1 ? '' : 's')
-      : '';
-    $('#list').innerHTML = slice.length ? slice.map((p, i) => card(p, (page - 1) * PER + i)).join('') :
-      '<div class="empty">No Master Guide matches your search.</div>';
+    $('#meta').textContent = filtered.length ? 'Showing ' + fmt((page - 1) * PER + 1) + '–' + fmt((page - 1) * PER + slice.length) + ' of ' + fmt(filtered.length) + ' Master Guide' + (filtered.length === 1 ? '' : 's') : '';
+    $('#list').innerHTML = slice.length ? slice.map((p, i) => card(p, (page - 1) * PER + i)).join('') : '<div class="empty">No Master Guide matches your search.</div>';
     $('#pager').innerHTML = pages > 1 ? pager(pages) : '';
   }
-
   function card(p, i) {
     const docs = D.showDocCount && D.docsTotal ? '<span>Documents ' + (p.dc || 0) + '/' + D.docsTotal + '</span>' : '<span></span>';
     return '<article class="card ' + (p.invested ? 'invested' : '') + '" data-i="' + i + '" tabindex="0">' +
@@ -306,10 +416,8 @@
       '<div class="where">' + esc([p.ch, p.di].filter(Boolean).join(' · ') || '—') + '<br>' + esc(p.cl) + '</div>' +
       '<div class="progress ' + (p.invested ? 'done' : '') + '"><span style="width:' + p.pct + '%"></span></div>' +
       '<div class="meta"><span class="pill ' + (p.invested ? 'done' : '') + '">' + esc(p.stageName) + '</span><b>' + p.pct + '%</b></div>' +
-      '<div class="meta">' + docs + '<span>' + (p.inv ? 'Invested ' + esc(fmtDate(p.inv)) : '') + '</span></div>' +
-      '</article>';
+      '<div class="meta">' + docs + '<span>' + (p.inv ? 'Invested ' + esc(fmtDate(p.inv)) : '') + '</span></div></article>';
   }
-
   function pager(pages) {
     const out = [], add = (n, label) => out.push('<button data-p="' + n + '" class="' + (n === page ? 'on' : '') + '">' + (label || n) + '</button>');
     if (page > 1) add(page - 1, '‹ Prev');
@@ -320,7 +428,7 @@
     if (page < pages) add(page + 1, 'Next ›');
     return out.join('');
   }
-  $('#pager').onclick = e => { const b = e.target.closest('button[data-p]'); if (!b) return; page = Number(b.dataset.p); render(); $('.filters').scrollIntoView({ behavior: 'smooth' }); };
+  $('#pager').onclick = e => { const b = e.target.closest('button[data-p]'); if (!b) return; page = Number(b.dataset.p); render(); $('#directory').scrollIntoView({ behavior: 'smooth' }); };
 
   function openCard(el) {
     const p = filtered[Number(el.dataset.i)]; if (!p) return;
@@ -329,16 +437,11 @@
       return '<li class="' + cls + (i === D.stages.length - 1 ? ' final' : '') + '"><span class="dot">' + (cls === 'done' ? '✓' : i + 1) + '</span>' + esc(s.name) + '</li>';
     }).join('');
     const dlg = $('#dlg');
-    dlg.innerHTML = '<div class="modal-head"><h2>' + esc(p.n) + '</h2><button class="x" aria-label="Close">×</button></div>' +
-      '<div class="modal-body">' +
+    dlg.innerHTML = '<div class="modal-head"><h2>' + esc(p.n) + '</h2><button class="x" aria-label="Close">×</button></div><div class="modal-body">' +
       '<div class="progress ' + (p.invested ? 'done' : '') + '"><span style="width:' + p.pct + '%"></span></div>' +
       '<div style="display:flex;justify-content:space-between;margin-top:6px;font-size:14px"><span class="pill ' + (p.invested ? 'done' : '') + '">' + esc(p.stageName) + '</span><b>' + p.pct + '% complete</b></div>' +
-      '<dl class="info">' +
-      '<dt>Church</dt><dd>' + esc(p.ch || '—') + '</dd>' +
-      '<dt>District</dt><dd>' + esc(p.di || '—') + '</dd>' +
-      '<dt>Cluster</dt><dd>' + esc(p.cl || '—') + '</dd>' +
-      '<dt>Date of training</dt><dd>' + esc(fmtDate(p.td) || '—') + '</dd>' +
-      '<dt>Date invested</dt><dd>' + esc(fmtDate(p.inv) || '—') + '</dd>' +
+      '<dl class="info"><dt>Church</dt><dd>' + esc(p.ch || '—') + '</dd><dt>District</dt><dd>' + esc(p.di || '—') + '</dd><dt>Cluster</dt><dd>' + esc(p.cl || '—') + '</dd>' +
+      '<dt>Date of training</dt><dd>' + esc(fmtDate(p.td) || '—') + '</dd><dt>Date invested</dt><dd>' + esc(fmtDate(p.inv) || '—') + '</dd>' +
       (D.showDocCount && D.docsTotal ? '<dt>Documents</dt><dd>' + (p.dc || 0) + ' of ' + D.docsTotal + ' submitted</dd>' : '') +
       '</dl><h3 style="font-size:14px">Progress</h3><ol class="steps">' + steps + '</ol></div>';
     dlg.querySelector('.x').onclick = () => dlg.close();
@@ -348,30 +451,29 @@
   $('#list').addEventListener('keydown', e => { if (e.key === 'Enter') { const c = e.target.closest('.card'); if (c) openCard(c); } });
   $('#dlg').addEventListener('click', e => { if (e.target.id === 'dlg') e.target.close(); });
 
-  /* ---------- sample data for preview (used only when API_URL is empty) ---------- */
+  /* ---------- sample data (only when API_URL is empty) ---------- */
   function demoData() {
     const stages = ['Enrolled', 'In Training', 'Requirements Complete', 'Approved for Investiture', 'Invested'].map((n, i) => ({ id: 'S' + i, name: n }));
-    const clusters = ['Cluster 1', 'Cluster 2', 'Cluster 3'];
-    const places = {
-      'Cluster 1': [['North District', ['Riverside Church', 'Hillcrest Church']], ['East District', ['Sunrise Church', 'Maple Church']]],
-      'Cluster 2': [['Central District', ['Central Church', 'Garden Church']], ['West District', ['Lakeview Church', 'Cedar Church']]],
-      'Cluster 3': [['Coastal District', ['Seaside Church', 'Harbor Church']], ['Island District', ['Palm Church', 'Bayview Church']]]
+    const geo = {
+      'Cluster 1': { at: [7.07, 125.61], d: { 'North District': ['Riverside Church', 'Hillcrest Church', 'Pinecrest Church'], 'East District': ['Sunrise Church', 'Maple Church'] } },
+      'Cluster 2': { at: [7.45, 125.80], d: { 'Central District': ['Central Church', 'Garden Church'], 'West District': ['Lakeview Church', 'Cedar Church', 'Valley Church'] } },
+      'Cluster 3': { at: [6.75, 125.36], d: { 'Coastal District': ['Seaside Church', 'Harbor Church'], 'Island District': ['Palm Church', 'Bayview Church'] } }
     };
+    let seed = 7; const rnd = n => { seed = (seed * 9301 + 49297) % 233280; return Math.floor(seed / 233280 * n); };
+    const places = [], list = [];
+    Object.keys(geo).forEach(cl => Object.keys(geo[cl].d).forEach((di, j) => geo[cl].d[di].forEach((ch, k) => {
+      const lat = geo[cl].at[0] + (j ? .09 : -.09) + (k - 1) * .035, lng = geo[cl].at[1] + (j ? .1 : -.1) + (k % 2 ? .04 : -.03);
+      places.push({ t: 'church', cl: cl, di: di, ch: ch, lat: lat, lng: lng }); list.push([cl, di, ch]);
+    })));
     const first = ['Maria', 'Jose', 'Ana', 'Mark', 'Grace', 'John', 'Joy', 'Paul', 'Ruth', 'Daniel', 'Faith', 'Samuel', 'Hope', 'David', 'Esther', 'Joel', 'Mercy', 'Caleb'];
     const last = ['Santos', 'Reyes', 'Cruz', 'Bautista', 'Garcia', 'Mendoza', 'Torres', 'Flores', 'Ramos', 'Villanueva', 'Castillo', 'Navarro', 'Aquino', 'Lim'];
-    let seed = 7; const rnd = n => { seed = (seed * 9301 + 49297) % 233280; return Math.floor(seed / 233280 * n); };
     const members = [];
-    for (let i = 0; i < 140; i++) {
-      const cl = clusters[rnd(3)], dist = places[cl][rnd(2)], ch = dist[1][rnd(2)];
-      const si = rnd(10) < 4 ? 4 : rnd(4);
-      const yr = 2019 + rnd(6);
-      members.push({
-        n: first[rnd(first.length)] + ' ' + String.fromCharCode(65 + rnd(26)) + '. ' + last[rnd(last.length)],
-        cl: cl, di: dist[0], ch: ch, td: yr + '-0' + (1 + rnd(9)) + '-1' + rnd(9), inv: si === 4 ? (yr + 1) + '-0' + (1 + rnd(9)) + '-2' + rnd(8) : '',
-        st: 'S' + si, dc: si === 4 ? 6 : Math.min(6, si + rnd(3))
-      });
+    for (let i = 0; i < 160; i++) {
+      const w = list[rnd(list.length)], si = rnd(10) < 4 ? 4 : rnd(4), yr = 2019 + rnd(6);
+      members.push({ n: first[rnd(first.length)] + ' ' + String.fromCharCode(65 + rnd(26)) + '. ' + last[rnd(last.length)], cl: w[0], di: w[1], ch: w[2],
+        td: yr + '-0' + (1 + rnd(9)) + '-1' + rnd(9), inv: si === 4 ? (yr + 1) + '-0' + (1 + rnd(9)) + '-2' + rnd(8) : '', st: 'S' + si, dc: si === 4 ? 6 : Math.min(6, si + rnd(3)) });
     }
-    return { ok: true, title: 'Davao Mission Master Guides', subtitle: 'Master Guide Progress & Investiture Registry', showDocCount: true, docsTotal: 6, stages: stages, clusters: clusters, members: members, updated: '' };
+    return { ok: true, title: 'Davao Mission Master Guides', subtitle: 'Master Guide Progress & Investiture Registry', showDocCount: true, docsTotal: 6, stages: stages, clusters: Object.keys(geo), members: members, places: places, updated: '' };
   }
 
   load();

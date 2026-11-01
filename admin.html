@@ -5,8 +5,11 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex">
 <title>Admin · Master Guide Registry</title>
-<link rel="stylesheet" href="style.css?v=3">
-<script src="config.js?v=3"></script>
+<link rel="icon" href="logo.png">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="style.css?v=4">
+<script src="config.js?v=4"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 </head>
 <body class="admin">
 <div id="app"><div class="login-wrap"><div class="login-card">Loading…</div></div></div>
@@ -98,7 +101,7 @@
 
   async function loadAll() {
     const j = await api('bootstrap');
-    S.user = j.user; S.stages = j.stages; S.documents = j.documents; S.clusters = j.clusters; S.members = j.members; S.settings = j.settings;
+    S.user = j.user; S.stages = j.stages; S.documents = j.documents; S.clusters = j.clusters; S.members = j.members; S.settings = j.settings; S.places = j.places || [];
     if (!isDir()) F.cluster = '';
     showMain();
   }
@@ -112,7 +115,7 @@
   function showLogin(msg) {
     const title = S.cfg.siteTitle || 'Master Guide Registry';
     $('#app').innerHTML = '<div class="login-wrap"><form class="login-card" id="loginForm" autocomplete="on">' +
-      '<img class="login-logo" src="' + esc(C.LOGO || 'logo.png') + '" alt="" onerror="this.remove()">' +
+      '<img class="login-logo" src="' + esc((C.LOGO || 'logo.png') + '?v=' + (C.VERSION || 1)) + '" alt="" onerror="this.remove()">' +
       '<div class="eyebrow">Admin</div><h1>' + esc(title) + '</h1><p class="muted small" style="margin-top:4px">Sign in to manage Master Guide records.</p>' +
       (msg ? '<div class="err">' + esc(msg) + '</div>' : '') +
       '<div class="field"><label for="lu">Username</label><input id="lu" autocomplete="username" required autocapitalize="none"></div>' +
@@ -178,7 +181,7 @@
 
   /* ---------------- main layout ---------------- */
   function showMain() {
-    const tabs = [['members', 'Master Guides'], ['import', 'Import']];
+    const tabs = [['members', 'Master Guides'], ['import', 'Import'], ['map', 'Map Pins']];
     if (isDir()) tabs.push(['stages', 'Stages & Documents'], ['clusters', 'Clusters'], ['accounts', 'Accounts'], ['settings', 'Settings'], ['log', 'Activity Log']);
     tabs.push(['password', 'My Password']);
     if (!tabs.some(t => t[0] === S.tab)) S.tab = 'members';
@@ -200,7 +203,7 @@
 
   function renderTab() {
     const v = $('#view');
-    ({ members: viewMembers, import: viewImport, stages: viewStages, clusters: viewClusters, accounts: viewAccounts, settings: viewSettings, log: viewLog, password: viewPassword })[S.tab](v);
+    ({ members: viewMembers, import: viewImport, map: viewMap, stages: viewStages, clusters: viewClusters, accounts: viewAccounts, settings: viewSettings, log: viewLog, password: viewPassword })[S.tab](v);
   }
 
   /* ---------------- Master Guides ---------------- */
@@ -525,6 +528,120 @@
         const b = await api('bootstrap'); S.members = b.members;
         toast('Clusters saved.', 'ok'); viewClusters(v);
       }
+    });
+  }
+
+  /* ---------------- Map pins ---------------- */
+  const MAP_DEFAULT = [7.2, 125.6];
+  let pinMap = null, pinLayer = null, pinMarker = null, pinSel = null;
+  const placeOf = it => S.places.find(p => p.type === it.type && p.cluster === it.cluster && (p.district || '') === (it.district || '') && (p.church || '') === (it.church || ''));
+  function placeTree() {
+    const clusters = isDir() ? S.clusters.slice() : [S.user.cluster];
+    return clusters.map(cl => {
+      const inC = S.members.filter(m => m.cluster === cl);
+      const dists = Array.from(new Set(inC.map(m => m.district).filter(Boolean))).sort();
+      return { type: 'cluster', cluster: cl, name: cl, kids: dists.map(di => ({
+        type: 'district', cluster: cl, district: di, name: di,
+        kids: Array.from(new Set(inC.filter(m => m.district === di).map(m => m.church).filter(Boolean))).sort().map(ch => ({ type: 'church', cluster: cl, district: di, church: ch, name: ch }))
+      })) };
+    });
+  }
+  function viewMap(v) {
+    v.innerHTML = '<div class="card-box"><h2>Map pins</h2><p class="muted small">Put a pin on the map for each church (and optionally each district and cluster). The public dashboard map uses these pins. ' +
+      'Districts and clusters without their own pin are placed in the middle of their churches automatically. Districts and churches come from your Master Guide records.</p>' +
+      '<div class="pin-layout"><div class="pin-tree"><input type="search" id="pq" placeholder="Search cluster, district, church…"><div id="ptree"></div></div>' +
+      '<div class="pin-side"><div id="pinfo" class="pin-info"><span class="muted">← Choose a cluster, district or church from the list.</span></div><div class="pin-map"><div id="pmap"></div></div></div></div></div>';
+    $('#pq').oninput = drawTree;
+    drawTree();
+    if (!window.L) { $('#pinfo').innerHTML = '<div class="err">The map could not load. Check your internet connection.</div>'; return; }
+    pinMap = L.map('pmap').setView(MAP_DEFAULT, 8);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap contributors' }).addTo(pinMap);
+    pinLayer = L.layerGroup().addTo(pinMap);
+    pinMap.on('click', e => { if (pinSel) setPin(e.latlng.lat, e.latlng.lng); });
+    drawPins();
+    if (pinSel) selectPlace(pinSel);
+  }
+  function drawTree() {
+    const q = ($('#pq').value || '').toLowerCase();
+    const row = (it, depth) => {
+      const has = !!placeOf(it), on = pinSel && pinSel.type === it.type && pinSel.cluster === it.cluster && (pinSel.district || '') === (it.district || '') && (pinSel.church || '') === (it.church || '');
+      return '<button class="ptree-row d' + depth + (on ? ' on' : '') + '" data-k="' + esc(JSON.stringify({ type: it.type, cluster: it.cluster, district: it.district || '', church: it.church || '' })) + '">' +
+        '<span>' + esc(it.name) + '</span><span class="' + (has ? 'pin-ok' : 'pin-no') + '">' + (has ? '📍 set' : 'no pin') + '</span></button>';
+    };
+    const out = [];
+    placeTree().forEach(c => {
+      const cm = !q || c.name.toLowerCase().includes(q);
+      const dRows = [];
+      c.kids.forEach(d => {
+        const dm = cm || d.name.toLowerCase().includes(q);
+        const hRows = d.kids.filter(h => dm || h.name.toLowerCase().includes(q)).map(h => row(h, 2));
+        if (dm || hRows.length) dRows.push(row(d, 1) + hRows.join(''));
+      });
+      if (cm || dRows.length) out.push(row(c, 0) + dRows.join(''));
+    });
+    $('#ptree').innerHTML = out.join('') || '<p class="muted small">Nothing found. Add Master Guides with district and church first.</p>';
+    $('#ptree').onclick = e => { const b = e.target.closest('.ptree-row'); if (b) selectPlace(JSON.parse(b.dataset.k)); };
+  }
+  function drawPins() {
+    if (!pinLayer) return;
+    pinLayer.clearLayers();
+    S.places.forEach(p => {
+      L.circleMarker([p.lat, p.lng], { radius: p.type === 'church' ? 5 : 8, color: '#2f3a1d', weight: 2, fillColor: p.type === 'church' ? '#8fa05a' : '#4b5d2a', fillOpacity: .9 })
+        .bindTooltip(esc(p.church || p.district || p.cluster) + ' <span style="color:#888">(' + p.type + ')</span>').addTo(pinLayer)
+        .on('click', () => selectPlace({ type: p.type, cluster: p.cluster, district: p.district || '', church: p.church || '' }));
+    });
+  }
+  function selectPlace(it) {
+    pinSel = it;
+    drawTree();
+    const ex = placeOf(it);
+    const label = it.church || it.district || it.cluster;
+    const where = [it.church ? it.district : '', it.district || it.church ? it.cluster : ''].filter(Boolean).join(', ');
+    $('#pinfo').innerHTML = '<div class="pin-title"><span class="k-label">' + it.type + '</span><h3>' + esc(label) + '</h3>' + (where ? '<span class="muted small">' + esc(where) + '</span>' : '') + '</div>' +
+      '<div class="pin-search"><input id="paddr" placeholder="Search an address, e.g. barangay, town" value="' + esc(ex && ex.address ? ex.address : [it.church, it.district, 'Davao'].filter(Boolean).join(', ')) + '"><button id="pfind">Find</button></div>' +
+      '<div id="presults"></div>' +
+      '<p class="small muted" style="margin:6px 0">Or click the map / drag the pin to the exact spot.</p>' +
+      '<div class="toolbar" style="margin:0"><span id="pcoord" class="small muted">' + (ex ? ex.lat.toFixed(5) + ', ' + ex.lng.toFixed(5) : 'No pin yet') + '</span><span class="spacer"></span>' +
+      (ex ? '<button class="btn-danger btn-sm" id="pdel">Remove pin</button>' : '') + '<button class="btn-primary btn-sm" id="psave" disabled>Save pin</button></div>';
+    if (pinMarker) { pinMap.removeLayer(pinMarker); pinMarker = null; }
+    if (ex) { placeMarker(ex.lat, ex.lng); pinMap.setView([ex.lat, ex.lng], it.type === 'church' ? 15 : 12); }
+    else {
+      const near = S.places.filter(p => p.cluster === it.cluster && (!it.district || p.district === it.district));
+      if (near.length) pinMap.fitBounds(L.latLngBounds(near.map(p => [p.lat, p.lng])).pad(.4), { maxZoom: 13 });
+    }
+    $('#pfind').onclick = e => findAddress(e.target);
+    $('#paddr').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); findAddress($('#pfind')); } };
+    $('#psave').onclick = e => busy(e.target, async () => {
+      const ll = pinMarker.getLatLng();
+      const j = await api('savePlace', { place: Object.assign({}, it, { lat: ll.lat, lng: ll.lng, address: $('#paddr').value }) });
+      S.places = j.places; drawPins(); selectPlace(it); toast('Pin saved.', 'ok');
+    });
+    if ($('#pdel')) $('#pdel').onclick = e => { if (confirm('Remove the map pin of ' + label + '?')) busy(e.target, async () => { const j = await api('deletePlace', { place: it }); S.places = j.places; drawPins(); selectPlace(it); toast('Pin removed.', 'ok'); }); };
+  }
+  function placeMarker(lat, lng) {
+    if (pinMarker) pinMarker.setLatLng([lat, lng]);
+    else {
+      pinMarker = L.marker([lat, lng], { draggable: true }).addTo(pinMap);
+      pinMarker.on('dragend', () => { const ll = pinMarker.getLatLng(); setPin(ll.lat, ll.lng); });
+    }
+  }
+  function setPin(lat, lng) {
+    placeMarker(lat, lng);
+    $('#pcoord').textContent = lat.toFixed(5) + ', ' + lng.toFixed(5) + ' (not saved yet)';
+    $('#psave').disabled = false;
+  }
+  async function findAddress(btn) {
+    const q = $('#paddr').value.trim(); if (!q) return;
+    await busy(btn, async () => {
+      const r = await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=5&countrycodes=ph&q=' + encodeURIComponent(q));
+      const list = await r.json();
+      $('#presults').innerHTML = list.length ? '<div class="presults">' + list.map((x, i) => '<button data-i="' + i + '">' + esc(x.display_name) + '</button>').join('') + '</div>'
+        : '<p class="small err" style="margin:6px 0">Address not found. Try a shorter search (e.g. just the barangay and town), or click the map.</p>';
+      $$('#presults button').forEach(b => b.onclick = () => {
+        const x = list[Number(b.dataset.i)];
+        setPin(Number(x.lat), Number(x.lon)); pinMap.setView([Number(x.lat), Number(x.lon)], 16);
+        $('#presults').innerHTML = '';
+      });
     });
   }
 
