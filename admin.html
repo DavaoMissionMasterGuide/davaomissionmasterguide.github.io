@@ -1,0 +1,606 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Admin · Master Guide Registry</title>
+<link rel="stylesheet" href="style.css">
+<script src="config.js"></script>
+</head>
+<body class="admin">
+<div id="app"><div class="login-wrap"><div class="login-card">Loading…</div></div></div>
+<dialog id="modal"></dialog>
+<div id="toast"></div>
+
+<script>
+(function () {
+  const C = window.MG_CONFIG || {};
+  const $ = (s, el) => (el || document).querySelector(s);
+  const $$ = (s, el) => Array.from((el || document).querySelectorAll(s));
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const fmt = n => Number(n).toLocaleString('en-PH');
+  const PER = 50;
+  const S = { token: null, user: null, stages: [], documents: [], clusters: [], members: [], settings: {}, cfg: {}, tab: 'members', users: [] };
+  const F = { q: '', cluster: '', stage: '', page: 1 };
+  const store = {
+    get: k => { try { return sessionStorage.getItem(k); } catch (e) { return null; } },
+    set: (k, v) => { try { v == null ? sessionStorage.removeItem(k) : sessionStorage.setItem(k, v); } catch (e) {} }
+  };
+  const isDir = () => S.user && S.user.role === 'director';
+
+  /* ---------------- API ---------------- */
+  async function api(action, data) {
+    if (!C.API_URL) throw new Error('The Web App URL is not set in config.js yet.');
+    let res;
+    try {
+      res = await fetch(C.API_URL, { method: 'POST', body: JSON.stringify(Object.assign({ action: action, token: S.token }, data || {})) });
+    } catch (e) { throw new Error('Cannot reach the server. Check your internet connection.'); }
+    let j;
+    try { j = await res.json(); } catch (e) { throw new Error('Unexpected server response. Is the Web App deployed with access "Anyone"?'); }
+    if (!j.ok) { const err = new Error(j.error || 'Request failed'); err.code = j.error; throw err; }
+    return j;
+  }
+  function handleErr(e) {
+    if (e && e.code === 'SESSION_EXPIRED') { toast('Your session expired. Please sign in again.', 'err'); signOut(true); return; }
+    if (e && e.code === 'MUST_CHANGE_PASSWORD') { showChangePassword(true); return; }
+    toast((e && e.message) || String(e), 'err');
+  }
+  async function busy(btn, fn) {
+    const label = btn ? btn.innerHTML : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Please wait…'; }
+    try { return await fn(); } catch (e) { handleErr(e); } finally { if (btn) { btn.disabled = false; btn.innerHTML = label; } }
+  }
+  function toast(msg, kind) {
+    const d = document.createElement('div');
+    d.className = kind || '';
+    d.textContent = msg;
+    $('#toast').appendChild(d);
+    setTimeout(() => d.remove(), kind === 'err' ? 6000 : 3000);
+  }
+
+  /* ---------------- stages helpers ---------------- */
+  function stageInfo(id) {
+    const N = S.stages.length, i = S.stages.findIndex(s => s.id === id);
+    return { idx: i, name: i >= 0 ? S.stages[i].name : '—', pct: N && i >= 0 ? Math.round((i + 1) / N * 100) : 0, invested: N > 0 && i === N - 1 };
+  }
+  const docCount = m => m.docs.filter(id => S.documents.some(d => d.id === id)).length;
+  function fmtDate(d) {
+    if (!d) return '';
+    const p = String(d).split('-').map(Number);
+    if (p.length !== 3 || !p[0]) return d;
+    return new Date(p[0], p[1] - 1, p[2]).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' });
+  }
+
+  /* ---------------- start / login ---------------- */
+  async function start() {
+    if (!C.API_URL) {
+      $('#app').innerHTML = '<div class="login-wrap"><div class="login-card"><div class="eyebrow">Setup needed</div><h1>Almost there</h1>' +
+        '<p>Open <code>config.js</code> and paste your Google Apps Script Web App URL into <code>API_URL</code>. See the README for the steps.</p>' +
+        '<p><a href="index.html">← Back to public page</a></p></div></div>';
+      return;
+    }
+    try {
+      const r = await fetch(C.API_URL + (C.API_URL.indexOf('?') < 0 ? '?' : '&') + 'action=config');
+      const j = await r.json();
+      if (j.ok) S.cfg = j;
+    } catch (e) { /* login still works without it */ }
+    S.token = store.get('mg_token');
+    if (S.token) {
+      try { await loadAll(); return; }
+      catch (e) {
+        if (e.code === 'MUST_CHANGE_PASSWORD') { S.user = S.user || {}; showChangePassword(true); return; }
+        S.token = null; store.set('mg_token', null);
+      }
+    }
+    showLogin();
+  }
+
+  async function loadAll() {
+    const j = await api('bootstrap');
+    S.user = j.user; S.stages = j.stages; S.documents = j.documents; S.clusters = j.clusters; S.members = j.members; S.settings = j.settings;
+    if (!isDir()) F.cluster = '';
+    showMain();
+  }
+
+  function afterLogin(j) {
+    S.token = j.token; store.set('mg_token', j.token); S.user = j.user;
+    if (j.user.mustChange) showChangePassword(true);
+    else loadAll().catch(handleErr);
+  }
+
+  function showLogin(msg) {
+    const title = S.cfg.siteTitle || 'Master Guide Registry';
+    $('#app').innerHTML = '<div class="login-wrap"><form class="login-card" id="loginForm" autocomplete="on">' +
+      '<div class="eyebrow">Admin</div><h1>' + esc(title) + '</h1><p class="muted small" style="margin-top:4px">Sign in to manage Master Guide records.</p>' +
+      (msg ? '<div class="err">' + esc(msg) + '</div>' : '') +
+      '<div class="field"><label for="lu">Username</label><input id="lu" autocomplete="username" required autocapitalize="none"></div>' +
+      '<div class="field"><label for="lp">Password</label><input id="lp" type="password" autocomplete="current-password" required></div>' +
+      '<button class="btn-primary" style="width:100%;justify-content:center" id="lbtn">Sign in</button>' +
+      (S.cfg.googleClientId ? '<div class="or">or</div><div id="gbtn"></div>' : '') +
+      '<p class="small" style="text-align:center;margin:18px 0 0"><a href="index.html">← Public page</a></p></form></div>';
+    $('#loginForm').onsubmit = e => {
+      e.preventDefault();
+      busy($('#lbtn'), async () => afterLogin(await api('login', { username: $('#lu').value, password: $('#lp').value })));
+    };
+    $('#lu').focus();
+    if (S.cfg.googleClientId) initGoogle();
+  }
+
+  function initGoogle() {
+    const render = () => {
+      google.accounts.id.initialize({
+        client_id: S.cfg.googleClientId,
+        callback: resp => busy(null, async () => afterLogin(await api('loginGoogle', { credential: resp.credential })))
+      });
+      const el = $('#gbtn'); if (el) google.accounts.id.renderButton(el, { theme: 'outline', size: 'large', width: 300, text: 'signin_with' });
+    };
+    if (window.google && google.accounts) return render();
+    const s = document.createElement('script');
+    s.src = 'https://accounts.google.com/gsi/client'; s.async = true; s.onload = render;
+    document.head.appendChild(s);
+  }
+
+  function signOut(silent) {
+    if (!silent && S.token) api('logout').catch(() => {});
+    S.token = null; S.user = null; store.set('mg_token', null);
+    try { if (window.google && google.accounts) google.accounts.id.disableAutoSelect(); } catch (e) {}
+    showLogin();
+  }
+
+  function passwordForm(forced) {
+    return (forced ? '' : '<div class="field"><label>Current password</label><input id="pOld" type="password" autocomplete="current-password"></div>') +
+      '<div class="field"><label>New password <span class="muted">(at least 8 characters)</span></label><input id="pNew" type="password" autocomplete="new-password"></div>' +
+      '<div class="field"><label>Repeat new password</label><input id="pNew2" type="password" autocomplete="new-password"></div>';
+  }
+  async function submitPassword(btn, forced) {
+    const nw = $('#pNew').value;
+    if (nw.length < 8) return toast('New password must be at least 8 characters.', 'err');
+    if (nw !== $('#pNew2').value) return toast('The new passwords do not match.', 'err');
+    await busy(btn, async () => {
+      await api('changePassword', { oldPassword: forced ? '' : $('#pOld').value, newPassword: nw });
+      toast('Password changed.', 'ok');
+      if (forced) await loadAll(); else ['#pOld', '#pNew', '#pNew2'].forEach(i => $(i) && ($(i).value = ''));
+    });
+  }
+  function showChangePassword(forced) {
+    $('#app').innerHTML = '<div class="login-wrap"><form class="login-card" id="pwForm">' +
+      '<div class="eyebrow">Security</div><h1>Set a new password</h1>' +
+      '<p class="muted small">For your security, please choose your own password before continuing.</p>' +
+      passwordForm(true) +
+      '<button class="btn-primary" style="width:100%;justify-content:center" id="pbtn">Save password</button>' +
+      '<p class="small" style="text-align:center;margin:14px 0 0"><button type="button" class="btn-link" id="pout">Sign out</button></p></form></div>';
+    $('#pwForm').onsubmit = e => { e.preventDefault(); submitPassword($('#pbtn'), true); };
+    $('#pout').onclick = () => signOut();
+    $('#pNew').focus();
+  }
+
+  /* ---------------- main layout ---------------- */
+  function showMain() {
+    const tabs = [['members', 'Master Guides'], ['import', 'Import']];
+    if (isDir()) tabs.push(['stages', 'Stages & Documents'], ['clusters', 'Clusters'], ['accounts', 'Accounts'], ['settings', 'Settings'], ['log', 'Activity Log']);
+    tabs.push(['password', 'My Password']);
+    if (!tabs.some(t => t[0] === S.tab)) S.tab = 'members';
+    const role = isDir() ? 'Director' : 'Coordinator · ' + S.user.cluster;
+    $('#app').innerHTML =
+      '<header class="topbar"><div class="wrap"><div class="brand">' + esc(S.settings.siteTitle || 'Master Guide Registry') + '<small>ADMIN</small></div>' +
+      '<div class="me"><span><b>' + esc(S.user.name) + '</b> · ' + esc(role) + '</span><a class="btn btn-sm" style="background:transparent;color:#fff;border-color:rgba(255,255,255,.35)" href="index.html" target="_blank">Public page ↗</a><button class="btn-sm" id="out">Sign out</button></div></div></header>' +
+      '<nav class="tabs"><div class="wrap">' + tabs.map(t => '<button data-tab="' + t[0] + '" class="' + (t[0] === S.tab ? 'on' : '') + '">' + t[1] + '</button>').join('') + '</div></nav>' +
+      '<main class="wrap view" id="view"></main>';
+    $('#out').onclick = () => signOut();
+    $('.tabs').onclick = e => {
+      const b = e.target.closest('button[data-tab]'); if (!b) return;
+      S.tab = b.dataset.tab;
+      $$('.tabs button').forEach(x => x.classList.toggle('on', x === b));
+      renderTab();
+    };
+    renderTab();
+  }
+
+  function renderTab() {
+    const v = $('#view');
+    ({ members: viewMembers, import: viewImport, stages: viewStages, clusters: viewClusters, accounts: viewAccounts, settings: viewSettings, log: viewLog, password: viewPassword })[S.tab](v);
+  }
+
+  /* ---------------- Master Guides ---------------- */
+  function viewMembers(v) {
+    v.innerHTML =
+      '<div class="toolbar">' +
+      '<input type="search" id="mq" placeholder="Search name, church, district…" value="' + esc(F.q) + '">' +
+      (isDir() ? '<select id="mc"><option value="">All clusters</option>' + S.clusters.map(c => '<option' + (c === F.cluster ? ' selected' : '') + '>' + esc(c) + '</option>').join('') + '</select>' : '') +
+      '<select id="ms"><option value="">All stages</option>' + S.stages.map(s => '<option value="' + esc(s.id) + '"' + (s.id === F.stage ? ' selected' : '') + '>' + esc(s.name) + '</option>').join('') + '</select>' +
+      '<span class="spacer"></span>' +
+      '<button id="mexp">Export CSV</button><button class="btn-primary" id="madd">+ Add Master Guide</button></div>' +
+      '<div class="result-meta" style="margin-top:0"><span id="mmeta"></span></div>' +
+      '<div class="table-wrap"><table><thead><tr><th>Name</th><th>Church</th><th>District</th>' + (isDir() ? '<th>Cluster</th>' : '') +
+      '<th>Stage</th><th>Progress</th><th>Docs</th><th>Cert.</th></tr></thead><tbody id="mbody"></tbody></table></div>' +
+      '<nav class="pager" id="mpager"></nav>';
+    $('#mq').oninput = e => { F.q = e.target.value; F.page = 1; drawMembers(); };
+    if ($('#mc')) $('#mc').onchange = e => { F.cluster = e.target.value; F.page = 1; drawMembers(); };
+    $('#ms').onchange = e => { F.stage = e.target.value; F.page = 1; drawMembers(); };
+    $('#madd').onclick = () => openMember(null);
+    $('#mexp').onclick = exportCsv;
+    $('#mbody').onclick = e => { const tr = e.target.closest('tr[data-id]'); if (tr) openMember(S.members.find(m => m.id === tr.dataset.id)); };
+    $('#mpager').onclick = e => { const b = e.target.closest('button[data-p]'); if (b) { F.page = Number(b.dataset.p); drawMembers(); window.scrollTo(0, 0); } };
+    drawMembers();
+  }
+
+  function filteredMembers() {
+    const words = F.q.toLowerCase().split(/\s+/).filter(Boolean);
+    return S.members.filter(m => (!F.cluster || m.cluster === F.cluster) && (!F.stage || m.stageId === F.stage) &&
+      words.every(w => (m.fullName + ' ' + m.church + ' ' + m.district + ' ' + m.cluster).toLowerCase().indexOf(w) >= 0))
+      .sort((a, b) => a.fullName.localeCompare(b.fullName));
+  }
+
+  function drawMembers() {
+    const list = filteredMembers();
+    const pages = Math.max(1, Math.ceil(list.length / PER));
+    if (F.page > pages) F.page = pages;
+    const slice = list.slice((F.page - 1) * PER, F.page * PER);
+    const inv = list.filter(m => stageInfo(m.stageId).invested).length;
+    $('#mmeta').textContent = fmt(list.length) + ' Master Guide' + (list.length === 1 ? '' : 's') + ' · ' + fmt(inv) + ' invested' +
+      (list.length > PER ? ' · page ' + F.page + ' of ' + pages : '');
+    $('#mbody').innerHTML = slice.map(m => {
+      const s = stageInfo(m.stageId);
+      return '<tr class="click" data-id="' + esc(m.id) + '"><td><b>' + esc(m.fullName) + '</b></td><td>' + esc(m.church) + '</td><td>' + esc(m.district) + '</td>' +
+        (isDir() ? '<td>' + esc(m.cluster) + '</td>' : '') +
+        '<td><span class="pill ' + (s.invested ? 'done' : '') + '">' + esc(s.name) + '</span></td>' +
+        '<td><div class="progress ' + (s.invested ? 'done' : '') + '"><span style="width:' + s.pct + '%"></span></div>' + s.pct + '%</td>' +
+        '<td class="badge-count">' + docCount(m) + '/' + S.documents.length + '</td>' +
+        '<td>' + (m.hasCert ? '<span class="pill gold">✓ File</span>' : '<span class="muted">—</span>') + '</td></tr>';
+    }).join('') || '<tr><td colspan="8" class="muted" style="text-align:center;padding:30px">No records yet. Click <b>+ Add Master Guide</b> or use the <b>Import</b> tab.</td></tr>';
+    let p = '';
+    if (pages > 1) for (let i = 1; i <= pages; i++) {
+      if (i === 1 || i === pages || Math.abs(i - F.page) <= 2) p += '<button class="btn-sm ' + (i === F.page ? 'on' : '') + '" data-p="' + i + '">' + i + '</button>';
+      else if (Math.abs(i - F.page) === 3) p += '<span class="muted">…</span>';
+    }
+    $('#mpager').innerHTML = p;
+  }
+
+  function openModal(title, body, foot, wide) {
+    const d = $('#modal');
+    d.className = wide ? 'wide' : '';
+    d.innerHTML = '<div class="modal-head"><h2>' + esc(title) + '</h2><button class="x" type="button" aria-label="Close">×</button></div>' +
+      '<div class="modal-body">' + body + '</div>' + (foot ? '<div class="modal-foot">' + foot + '</div>' : '');
+    $('.x', d).onclick = () => d.close();
+    if (!d.open) d.showModal();
+    return d;
+  }
+
+  function datalist(id, values) {
+    return '<datalist id="' + id + '">' + Array.from(new Set(values.filter(Boolean))).sort().map(v => '<option value="' + esc(v) + '">').join('') + '</datalist>';
+  }
+
+  function openMember(m) {
+    const isNew = !m;
+    m = m || { fullName: '', cluster: isDir() ? (F.cluster || S.clusters[0] || '') : S.user.cluster, district: '', church: '', trainingDate: '', investedDate: '', stageId: (S.stages[0] || {}).id, docs: [], hasCert: false };
+    const clusterField = isDir()
+      ? '<select id="fCl">' + S.clusters.map(c => '<option' + (c === m.cluster ? ' selected' : '') + '>' + esc(c) + '</option>').join('') + '</select>'
+      : '<input id="fCl" value="' + esc(m.cluster) + '" disabled>';
+    const body =
+      '<div class="field"><label>Full name *</label><input id="fName" value="' + esc(m.fullName) + '" placeholder="e.g. Juan A. Dela Cruz"></div>' +
+      '<div class="grid2"><div class="field"><label>Cluster *</label>' + clusterField + '</div>' +
+      '<div class="field"><label>District</label><input id="fDi" list="dlDi" value="' + esc(m.district) + '"></div></div>' +
+      '<div class="field"><label>Church</label><input id="fCh" list="dlCh" value="' + esc(m.church) + '"></div>' +
+      datalist('dlDi', S.members.map(x => x.district)) + datalist('dlCh', S.members.map(x => x.church)) +
+      '<div class="grid2"><div class="field"><label>Date of training</label><input id="fTd" type="date" value="' + esc(m.trainingDate) + '"></div>' +
+      '<div class="field"><label>Date invested</label><input id="fInv" type="date" value="' + esc(m.investedDate) + '"></div></div>' +
+      '<div class="field"><label>Progress stage</label><select id="fSt">' + S.stages.map((s, i) => '<option value="' + esc(s.id) + '"' + (s.id === m.stageId ? ' selected' : '') + '>' + (i + 1) + '. ' + esc(s.name) + '</option>').join('') + '</select>' +
+      '<div class="progress" style="margin-top:8px" id="fBar"><span></span></div></div>' +
+      '<div class="field"><label>Document tracker</label><div class="checks">' +
+      (S.documents.map(d => '<label><input type="checkbox" value="' + esc(d.id) + '"' + (m.docs.indexOf(d.id) >= 0 ? ' checked' : '') + '> ' + esc(d.name) + '</label>').join('') || '<span class="muted small">No documents set up yet.</span>') +
+      '</div></div>' +
+      '<div class="field"><label>Certificate <span class="muted">(PDF, JPG or PNG, max 5 MB — private, never shown publicly)</span></label><div class="cert-box">' +
+      (m.hasCert ? '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px"><span class="pill gold">✓ ' + esc(m.certName || 'Certificate') + '</span>' +
+        '<button type="button" class="btn-sm" id="cView">View</button><button type="button" class="btn-sm btn-danger" id="cDel">Remove</button></div><div class="small muted" style="margin-bottom:6px">Upload a new file to replace it:</div>' : '') +
+      '<input type="file" id="fCert" accept="application/pdf,image/jpeg,image/png"></div></div>' +
+      (m.updatedAt ? '<p class="small muted">Last updated ' + esc(m.updatedAt) + ' by ' + esc(m.updatedBy) + '</p>' : '');
+    const foot = (isNew ? '' : '<button class="btn-danger left" id="mDel">Delete</button>') + '<button id="mCancel">Cancel</button><button class="btn-primary" id="mSave">' + (isNew ? 'Add Master Guide' : 'Save changes') + '</button>';
+    const d = openModal(isNew ? 'Add Master Guide' : 'Edit Master Guide', body, foot, true);
+
+    const bar = () => { const s = stageInfo($('#fSt').value); const b = $('#fBar'); b.className = 'progress' + (s.invested ? ' done' : ''); $('span', b).style.width = s.pct + '%'; };
+    bar();
+    $('#fSt').onchange = bar;
+    $('#fInv').onchange = () => {
+      const last = S.stages[S.stages.length - 1];
+      if ($('#fInv').value && last && $('#fSt').value !== last.id && confirm('Set the stage to "' + last.name + '" as well?')) { $('#fSt').value = last.id; bar(); }
+    };
+    $('#mCancel').onclick = () => d.close();
+    if ($('#cView')) $('#cView').onclick = () => viewCert(m);
+    if ($('#cDel')) $('#cDel').onclick = e => {
+      if (!confirm('Remove the certificate file of ' + m.fullName + '?')) return;
+      busy(e.target, async () => { const j = await api('removeCert', { id: m.id }); upsert(j.member); toast('Certificate removed.', 'ok'); openMember(j.member); drawMembers(); });
+    };
+    if ($('#mDel')) $('#mDel').onclick = e => {
+      if (!confirm('Delete ' + m.fullName + ' permanently? This cannot be undone.')) return;
+      busy(e.target, async () => { await api('deleteMember', { id: m.id }); S.members = S.members.filter(x => x.id !== m.id); d.close(); drawMembers(); toast('Deleted.', 'ok'); });
+    };
+    $('#mSave').onclick = e => {
+      const file = $('#fCert').files[0];
+      if (file && file.size > 5 * 1024 * 1024) return toast('The certificate file is larger than 5 MB.', 'err');
+      if (!$('#fName').value.trim()) return toast('Please enter the full name.', 'err');
+      const payload = {
+        id: m.id || '', fullName: $('#fName').value, cluster: $('#fCl').value, district: $('#fDi').value, church: $('#fCh').value,
+        trainingDate: $('#fTd').value, investedDate: $('#fInv').value, stageId: $('#fSt').value,
+        docs: $$('.checks input:checked', d).map(x => x.value)
+      };
+      busy(e.target, async () => {
+        let j = await api('saveMember', { member: payload });
+        if (j.duplicate) {
+          if (!confirm(j.message + '\n\nAdd anyway?')) return;
+          j = await api('saveMember', { member: payload, force: true });
+        }
+        upsert(j.member);
+        if (file) {
+          e.target.textContent = 'Uploading certificate…';
+          const data = await fileToBase64(file);
+          const k = await api('uploadCert', { id: j.member.id, name: file.name, mime: file.type, data: data });
+          upsert(k.member);
+        }
+        d.close(); drawMembers();
+        toast(isNew ? 'Master Guide added.' : 'Changes saved.', 'ok');
+      });
+    };
+    $('#fName').focus();
+  }
+
+  function upsert(m) {
+    const i = S.members.findIndex(x => x.id === m.id);
+    if (i >= 0) S.members[i] = m; else S.members.push(m);
+  }
+
+  function fileToBase64(file) {
+    return new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(String(r.result).split(',')[1] || '');
+      r.onerror = () => rej(new Error('Could not read the file.'));
+      r.readAsDataURL(file);
+    });
+  }
+
+  async function viewCert(m) {
+    const w = window.open('', '_blank');
+    if (w) w.document.write('<p style="font-family:sans-serif;padding:20px">Loading certificate…</p>');
+    try {
+      const j = await api('getCert', { id: m.id });
+      const bin = atob(j.data), bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const url = URL.createObjectURL(new Blob([bytes], { type: j.mime }));
+      if (w) w.location.href = url;
+      else { const a = document.createElement('a'); a.href = url; a.download = j.name || 'certificate'; a.click(); }
+    } catch (e) { if (w) w.close(); handleErr(e); }
+  }
+
+  function csvCell(v) { v = String(v == null ? '' : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }
+  function download(name, text) {
+    const url = URL.createObjectURL(new Blob(['﻿' + text], { type: 'text/csv;charset=utf-8' }));
+    const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
+  function exportCsv() {
+    const rows = [['Full Name', 'Cluster', 'District', 'Church', 'Date of Training', 'Date Invested', 'Stage', 'Progress %', 'Documents Submitted', 'Documents Missing', 'Certificate Uploaded']];
+    filteredMembers().forEach(m => {
+      const s = stageInfo(m.stageId);
+      rows.push([m.fullName, m.cluster, m.district, m.church, m.trainingDate, m.investedDate, s.name, s.pct,
+        S.documents.filter(d => m.docs.indexOf(d.id) >= 0).map(d => d.name).join('; '),
+        S.documents.filter(d => m.docs.indexOf(d.id) < 0).map(d => d.name).join('; '), m.hasCert ? 'Yes' : 'No']);
+    });
+    download('master-guides-' + new Date().toISOString().slice(0, 10) + '.csv', rows.map(r => r.map(csvCell).join(',')).join('\r\n'));
+  }
+
+  /* ---------------- Import ---------------- */
+  let importRows = [];
+  function viewImport(v) {
+    v.innerHTML = '<div class="card-box"><h2>Import many Master Guides at once</h2>' +
+      '<p class="muted">Copy the rows from Excel or Google Sheets and paste them below, or choose a CSV file. Columns must be in this order:</p>' +
+      '<div class="table-wrap" style="box-shadow:none;border:1px solid var(--line);margin-bottom:12px"><table><thead><tr><th>Full Name</th><th>Cluster</th><th>District</th><th>Church</th><th>Date of Training</th><th>Date Invested</th><th>Stage</th></tr></thead>' +
+      '<tbody><tr><td>Juan A. Dela Cruz</td><td>' + esc(S.clusters[0] || 'Cluster 1') + '</td><td>Example District</td><td>Example Church</td><td>2024-03-15</td><td>2025-04-20</td><td>' + esc((S.stages[S.stages.length - 1] || {}).name || '') + '</td></tr></tbody></table></div>' +
+      '<ul class="small muted" style="margin-top:0"><li>A header row is fine — it is skipped automatically.</li>' +
+      '<li>Dates can be 2024-03-15 or 3/15/2024 (month/day/year). Blank is OK.</li>' +
+      '<li>If Stage is blank: people with a Date Invested go to the last stage, others to the first stage.</li>' +
+      (isDir() ? '' : '<li>Cluster can be blank — everyone goes to <b>' + esc(S.user.cluster) + '</b>.</li>') +
+      '<li>Names that already exist in the same cluster are skipped.</li></ul>' +
+      '<div class="toolbar"><input type="file" id="iFile" accept=".csv,text/csv" style="width:auto"><button id="iTpl">Download template</button></div>' +
+      '<textarea id="iText" rows="9" placeholder="Paste rows here…"></textarea>' +
+      '<div class="toolbar" style="margin-top:10px"><button id="iPrev">Preview</button><span class="spacer"></span><button class="btn-primary" id="iGo" disabled>Import</button></div>' +
+      '<div id="iOut"></div></div>';
+    $('#iTpl').onclick = () => download('master-guide-import-template.csv', 'Full Name,Cluster,District,Church,Date of Training,Date Invested,Stage\r\n');
+    $('#iFile').onchange = e => { const f = e.target.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => { $('#iText').value = r.result; preview(); }; r.readAsText(f); };
+    $('#iPrev').onclick = preview;
+    $('#iText').oninput = () => { $('#iGo').disabled = true; };
+    $('#iGo').onclick = e => doImport(e.target);
+  }
+
+  function parseTable(text) {
+    text = text.replace(/^﻿/, '');
+    const delim = text.indexOf('\t') >= 0 ? '\t' : ',';
+    const rows = []; let row = [], cell = '', q = false;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (q) {
+        if (ch === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; }
+        else cell += ch;
+      } else if (ch === '"' && cell === '') q = true;
+      else if (ch === delim) { row.push(cell); cell = ''; }
+      else if (ch === '\n' || ch === '\r') { if (ch === '\r' && text[i + 1] === '\n') i++; row.push(cell); rows.push(row); row = []; cell = ''; }
+      else cell += ch;
+    }
+    if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
+    return rows.filter(r => r.some(c => c.trim() !== ''));
+  }
+  function normDate(s) {
+    s = String(s || '').trim();
+    if (!s) return '';
+    let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    if (m) return m[1] + '-' + m[2].padStart(2, '0') + '-' + m[3].padStart(2, '0');
+    m = s.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})$/);
+    if (m) return m[3] + '-' + m[1].padStart(2, '0') + '-' + m[2].padStart(2, '0');
+    const t = new Date(s);
+    if (!isNaN(t)) return t.getFullYear() + '-' + String(t.getMonth() + 1).padStart(2, '0') + '-' + String(t.getDate()).padStart(2, '0');
+    return s;
+  }
+  function preview() {
+    const rows = parseTable($('#iText').value);
+    if (rows.length && /name/i.test(rows[0][0] || '')) rows.shift();
+    importRows = rows.map(r => ({
+      fullName: (r[0] || '').trim(), cluster: (r[1] || '').trim(), district: (r[2] || '').trim(), church: (r[3] || '').trim(),
+      trainingDate: normDate(r[4]), investedDate: normDate(r[5]), stage: (r[6] || '').trim()
+    }));
+    $('#iGo').disabled = !importRows.length;
+    $('#iOut').innerHTML = importRows.length
+      ? '<p><b>' + fmt(importRows.length) + '</b> row(s) ready. First ' + Math.min(10, importRows.length) + ' shown:</p><div class="table-wrap"><table><thead><tr><th>#</th><th>Name</th><th>Cluster</th><th>District</th><th>Church</th><th>Training</th><th>Invested</th><th>Stage</th></tr></thead><tbody>' +
+        importRows.slice(0, 10).map((r, i) => '<tr><td>' + (i + 1) + '</td><td>' + esc(r.fullName) + '</td><td>' + esc(r.cluster) + '</td><td>' + esc(r.district) + '</td><td>' + esc(r.church) + '</td><td>' + esc(r.trainingDate) + '</td><td>' + esc(r.investedDate) + '</td><td>' + esc(r.stage) + '</td></tr>').join('') +
+        '</tbody></table></div>'
+      : '<p class="muted">Nothing to import yet.</p>';
+  }
+  async function doImport(btn) {
+    if (!importRows.length) return;
+    await busy(btn, async () => {
+      let added = 0; const skipped = [];
+      for (let i = 0; i < importRows.length; i += 500) {
+        btn.textContent = 'Importing ' + Math.min(i + 500, importRows.length) + ' / ' + importRows.length + '…';
+        const j = await api('importMembers', { rows: importRows.slice(i, i + 500), lineOffset: i });
+        added += j.added; skipped.push.apply(skipped, j.skipped);
+      }
+      const b = await api('bootstrap');
+      S.members = b.members;
+      importRows = [];
+      $('#iText').value = '';
+      $('#iOut').innerHTML = '<div class="notice" style="background:var(--green-soft);border-color:#b9dfc6;color:#1d5c33"><b>' + fmt(added) + '</b> Master Guide(s) added.' +
+        (skipped.length ? ' <b>' + skipped.length + '</b> row(s) skipped:' : '') + '</div>' +
+        (skipped.length ? '<div class="table-wrap"><table><thead><tr><th>Row</th><th>Reason</th></tr></thead><tbody>' + skipped.slice(0, 300).map(s => '<tr><td>' + s.line + '</td><td>' + esc(s.reason) + '</td></tr>').join('') + '</tbody></table></div>' : '');
+      toast(fmt(added) + ' imported.', 'ok');
+    });
+    $('#iGo').disabled = true;
+  }
+
+  /* ---------------- list editor (stages, documents, clusters) ---------------- */
+  function listEditor(box, items, opts) {
+    // items: [{key, name}]
+    let list = items.map(x => ({ key: x.key, name: x.name }));
+    const draw = () => {
+      $('.rows', box).innerHTML = list.map((x, i) =>
+        '<div class="row" data-i="' + i + '"><span class="num">' + (i + 1) + '.</span><input value="' + esc(x.name) + '" placeholder="' + esc(opts.placeholder) + '">' +
+        '<button type="button" data-a="up" title="Move up"' + (i === 0 ? ' disabled' : '') + '>↑</button>' +
+        '<button type="button" data-a="down" title="Move down"' + (i === list.length - 1 ? ' disabled' : '') + '>↓</button>' +
+        '<button type="button" data-a="del" class="btn-danger" title="Remove">✕</button></div>').join('') ||
+        '<p class="muted small">Nothing yet.</p>';
+    };
+    box.innerHTML = '<div class="list-editor"><div class="rows"></div></div><div class="toolbar" style="margin:10px 0 0"><button type="button" class="add">+ Add</button><span class="spacer"></span><button type="button" class="btn-primary save">Save</button></div>';
+    draw();
+    $('.rows', box).addEventListener('input', e => { const r = e.target.closest('.row'); if (r) list[Number(r.dataset.i)].name = e.target.value; });
+    $('.rows', box).addEventListener('click', e => {
+      const b = e.target.closest('button[data-a]'); if (!b) return;
+      const i = Number(b.closest('.row').dataset.i);
+      if (b.dataset.a === 'up') [list[i - 1], list[i]] = [list[i], list[i - 1]];
+      if (b.dataset.a === 'down') [list[i + 1], list[i]] = [list[i], list[i + 1]];
+      if (b.dataset.a === 'del') list.splice(i, 1);
+      draw();
+    });
+    $('.add', box).onclick = () => { list.push({ key: '', name: '' }); draw(); const ins = $$('.rows input', box); ins[ins.length - 1].focus(); };
+    $('.save', box).onclick = e => busy(e.target, async () => { await opts.onSave(list.map(x => ({ key: x.key, name: x.name.trim() }))); });
+  }
+
+  function viewStages(v) {
+    v.innerHTML = '<div class="two-col"><div class="card-box"><h2>Progress stages</h2><p class="muted small">In order, from first to last. The <b>last stage means Invested</b> (100%, shown in green). The progress bar fills by stage.</p><div id="stBox"></div></div>' +
+      '<div class="card-box"><h2>Required documents</h2><p class="muted small">These appear as checkboxes on every Master Guide. The public page shows only the count (e.g. "Documents 4/6").</p><div id="docBox"></div></div></div>';
+    listEditor($('#stBox'), S.stages.map(s => ({ key: s.id, name: s.name })), {
+      placeholder: 'Stage name',
+      onSave: async list => { const j = await api('saveStages', { items: list.map(x => ({ id: x.key, name: x.name })) }); S.stages = j.items; toast('Stages saved.', 'ok'); viewStages(v); }
+    });
+    listEditor($('#docBox'), S.documents.map(s => ({ key: s.id, name: s.name })), {
+      placeholder: 'Document name',
+      onSave: async list => { const j = await api('saveDocuments', { items: list.map(x => ({ id: x.key, name: x.name })) }); S.documents = j.items; toast('Documents saved.', 'ok'); viewStages(v); }
+    });
+  }
+
+  function viewClusters(v) {
+    v.innerHTML = '<div class="card-box" style="max-width:640px"><h2>Clusters</h2><p class="muted small">Renaming a cluster updates all its Master Guides and coordinator accounts. A cluster can only be removed when nobody is assigned to it.</p><div id="clBox"></div></div>';
+    listEditor($('#clBox'), S.clusters.map(c => ({ key: c, name: c })), {
+      placeholder: 'Cluster name',
+      onSave: async list => {
+        const j = await api('saveClusters', { items: list.map(x => ({ old: x.key, name: x.name })) });
+        S.clusters = j.clusters;
+        const b = await api('bootstrap'); S.members = b.members;
+        toast('Clusters saved.', 'ok'); viewClusters(v);
+      }
+    });
+  }
+
+  /* ---------------- Accounts ---------------- */
+  async function viewAccounts(v) {
+    v.innerHTML = '<div class="toolbar"><h2 style="font-size:17px">Accounts</h2><span class="spacer"></span><button class="btn-primary" id="uAdd">+ Add account</button></div><div class="table-wrap"><table><thead><tr><th>Name</th><th>Username</th><th>Gmail (Google sign-in)</th><th>Role</th><th>Cluster</th><th>Status</th><th>Last sign-in</th></tr></thead><tbody id="uBody"><tr><td colspan="7" class="muted">Loading…</td></tr></tbody></table></div>' +
+      '<p class="small muted">Every account can sign in with username + password. If you add a Gmail address, that person can also use "Sign in with Google" (needs the Google Client ID in Settings).</p>';
+    $('#uAdd').onclick = () => openUser(null);
+    $('#uBody').onclick = e => { const tr = e.target.closest('tr[data-id]'); if (tr) openUser(S.users.find(u => u.id === tr.dataset.id)); };
+    try { S.users = (await api('listUsers')).users; drawUsers(); } catch (e) { handleErr(e); }
+  }
+  function drawUsers() {
+    $('#uBody').innerHTML = S.users.map(u => '<tr class="click" data-id="' + esc(u.id) + '"><td><b>' + esc(u.name) + '</b></td><td>' + esc(u.username) + '</td><td>' + esc(u.email || '—') + '</td>' +
+      '<td><span class="pill ' + (u.role === 'director' ? 'gold' : '') + '">' + (u.role === 'director' ? 'Director' : 'Coordinator') + '</span></td><td>' + esc(u.cluster || 'All') + '</td>' +
+      '<td>' + (u.active ? '<span class="pill done">Active</span>' : '<span class="pill off">Disabled</span>') + (u.mustChange ? ' <span class="small muted">(must change password)</span>' : '') + '</td>' +
+      '<td class="small muted">' + esc(u.lastLogin || 'Never') + '</td></tr>').join('');
+  }
+  function openUser(u) {
+    const isNew = !u;
+    u = u || { name: '', username: '', email: '', role: 'coordinator', cluster: S.clusters[0] || '', active: true };
+    const self = u.id === S.user.id;
+    const body =
+      '<div class="field"><label>Full name</label><input id="uName" value="' + esc(u.name) + '"></div>' +
+      '<div class="grid2"><div class="field"><label>Username *</label><input id="uUser" value="' + esc(u.username) + '" autocapitalize="none" placeholder="e.g. cluster1mg"></div>' +
+      '<div class="field"><label>Gmail <span class="muted">(optional)</span></label><input id="uMail" type="email" value="' + esc(u.email) + '" placeholder="name@gmail.com"></div></div>' +
+      '<div class="grid2"><div class="field"><label>Role</label><select id="uRole"' + (self ? ' disabled' : '') + '><option value="coordinator"' + (u.role !== 'director' ? ' selected' : '') + '>Cluster Coordinator</option><option value="director"' + (u.role === 'director' ? ' selected' : '') + '>Master Guide Director</option></select></div>' +
+      '<div class="field" id="uClWrap"><label>Cluster</label><select id="uCl">' + S.clusters.map(c => '<option' + (c === u.cluster ? ' selected' : '') + '>' + esc(c) + '</option>').join('') + '</select></div></div>' +
+      '<div class="field"><label>' + (isNew ? 'Password' : 'Reset password') + ' <span class="muted">(' + (isNew ? 'at least 8 characters' : 'leave blank to keep the current one') + ')</span></label><input id="uPw" type="text" autocomplete="off" placeholder="' + (isNew ? 'Temporary password' : '') + '"><p class="small muted" style="margin:4px 0 0">They will be asked to change it at first sign-in.</p></div>' +
+      '<div class="checks"><label><input type="checkbox" id="uAct"' + (u.active ? ' checked' : '') + (self ? ' disabled' : '') + '> Account is active (can sign in)</label></div>';
+    const foot = (isNew || self ? '' : '<button class="btn-danger left" id="uDel">Delete</button>') + '<button id="uCancel">Cancel</button><button class="btn-primary" id="uSave">' + (isNew ? 'Create account' : 'Save') + '</button>';
+    const d = openModal(isNew ? 'Add account' : 'Edit account', body, foot);
+    const roleUi = () => { $('#uClWrap').style.visibility = $('#uRole').value === 'director' ? 'hidden' : 'visible'; };
+    roleUi(); $('#uRole').onchange = roleUi;
+    $('#uCancel').onclick = () => d.close();
+    if ($('#uDel')) $('#uDel').onclick = e => {
+      if (!confirm('Delete the account "' + u.username + '"? (Tip: you can just untick "active" instead.)')) return;
+      busy(e.target, async () => { S.users = (await api('deleteUser', { id: u.id })).users; drawUsers(); d.close(); toast('Account deleted.', 'ok'); });
+    };
+    $('#uSave').onclick = e => busy(e.target, async () => {
+      const j = await api('saveUser', { user: { id: u.id || '', name: $('#uName').value, username: $('#uUser').value, email: $('#uMail').value, role: $('#uRole').value, cluster: $('#uCl').value, active: $('#uAct').checked, password: $('#uPw').value } });
+      S.users = j.users; drawUsers(); d.close(); toast(isNew ? 'Account created.' : 'Account saved.', 'ok');
+    });
+  }
+
+  /* ---------------- Settings ---------------- */
+  function viewSettings(v) {
+    const s = S.settings;
+    v.innerHTML = '<div class="card-box" style="max-width:720px"><h2>Website settings</h2><p class="muted small">Changes appear on the public page within a minute.</p>' +
+      '<div class="field"><label>Website title</label><input id="sTitle" value="' + esc(s.siteTitle) + '"></div>' +
+      '<div class="field"><label>Subtitle</label><input id="sSub" value="' + esc(s.subtitle) + '"></div>' +
+      '<div class="checks" style="grid-template-columns:1fr;margin-bottom:16px"><label><input type="checkbox" id="sDocs"' + (s.showDocCount ? ' checked' : '') + '> Show the document count (e.g. "Documents 4/6") on the public page</label></div>' +
+      '<h2 style="margin-top:20px">Google sign-in <span class="muted small">(optional)</span></h2><p class="muted small">Paste the OAuth Client ID from Google Cloud Console (see README, step 7). Leave blank to use username + password only.</p>' +
+      '<div class="field"><label>Google Client ID</label><input id="sCid" value="' + esc(s.googleClientId) + '" placeholder="1234567890-xxxx.apps.googleusercontent.com"></div>' +
+      '<button class="btn-primary" id="sSave">Save settings</button></div>';
+    $('#sSave').onclick = e => busy(e.target, async () => {
+      const j = await api('saveSettings', { settings: { siteTitle: $('#sTitle').value, subtitle: $('#sSub').value, showDocCount: $('#sDocs').checked, googleClientId: $('#sCid').value } });
+      S.settings = j.settings; S.cfg.googleClientId = j.settings.googleClientId; S.cfg.siteTitle = j.settings.siteTitle;
+      $('.brand').firstChild.textContent = S.settings.siteTitle;
+      toast('Settings saved.', 'ok');
+    });
+  }
+
+  async function viewLog(v) {
+    v.innerHTML = '<div class="table-wrap"><table><thead><tr><th>Time</th><th>User</th><th>Action</th><th>Details</th></tr></thead><tbody id="lBody"><tr><td colspan="4" class="muted">Loading…</td></tr></tbody></table></div><p class="small muted">Latest 300 actions. The full log is in the "Log" sheet of your Google Sheet.</p>';
+    try {
+      const j = await api('getLog');
+      $('#lBody').innerHTML = j.log.map(l => '<tr><td class="small" style="white-space:nowrap">' + esc(l.time) + '</td><td>' + esc(l.user) + '</td><td>' + esc(l.action) + '</td><td class="small">' + esc(l.detail) + '</td></tr>').join('') || '<tr><td colspan="4" class="muted">No activity yet.</td></tr>';
+    } catch (e) { handleErr(e); }
+  }
+
+  function viewPassword(v) {
+    v.innerHTML = '<form class="card-box" style="max-width:460px" id="myPw"><h2>Change my password</h2><p class="muted small">Signed in as <b>' + esc(S.user.username) + '</b>.</p>' + passwordForm(false) + '<button class="btn-primary" id="myPwBtn">Change password</button></form>';
+    $('#myPw').onsubmit = e => { e.preventDefault(); submitPassword($('#myPwBtn'), false); };
+  }
+
+  start();
+})();
+</script>
+</body>
+</html>

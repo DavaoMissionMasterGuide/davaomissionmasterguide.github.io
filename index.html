@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Davao Mission Master Guides</title>
+<meta name="description" content="Master Guide progress and investiture registry of Davao Mission.">
+<link rel="stylesheet" href="style.css">
+<script src="config.js"></script>
+</head>
+<body class="public">
+<header class="hero">
+  <div class="wrap">
+    <div class="eyebrow">Davao Mission</div>
+    <h1 id="title">Master Guide Registry</h1>
+    <p id="subtitle">Master Guide Progress &amp; Investiture Registry</p>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="stats" id="stats">
+    <div class="stat"><b>…</b><span>Loading</span></div>
+  </section>
+
+  <section class="panel">
+    <h2>Progress stages</h2>
+    <div class="stage-flow" id="stageFlow"></div>
+  </section>
+
+  <section class="panel">
+    <h2>By cluster <span class="muted small">(invested / total)</span></h2>
+    <div class="cluster-bars" id="clusterBars"></div>
+  </section>
+
+  <section class="filters">
+    <input id="q" type="search" placeholder="Search a name or church…" aria-label="Search">
+    <select id="fCluster" aria-label="Cluster"></select>
+    <select id="fDistrict" aria-label="District"></select>
+    <select id="fChurch" aria-label="Church"></select>
+    <select id="fStage" aria-label="Stage"></select>
+    <select id="fSort" aria-label="Sort">
+      <option value="name">Sort: Name A–Z</option>
+      <option value="progress">Sort: Most progress</option>
+      <option value="invested">Sort: Recently invested</option>
+    </select>
+  </section>
+
+  <div id="demo" class="notice" hidden style="margin-top:14px">Showing <b>sample data</b> only. Put your Web App URL in <code>config.js</code> to show the real registry.</div>
+  <div class="result-meta"><span id="meta"></span><button class="btn-link" id="clear" hidden>Clear filters</button></div>
+  <section id="list" class="cards"><div class="empty">Loading the registry…</div></section>
+  <nav id="pager" class="pager"></nav>
+</main>
+
+<footer class="foot"><span id="updated"></span> · <a href="admin.html">Admin sign in</a></footer>
+
+<dialog id="dlg"></dialog>
+
+<script>
+(function () {
+  const C = window.MG_CONFIG || {};
+  const PER = 24;
+  const $ = s => document.querySelector(s);
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const fmt = n => Number(n).toLocaleString('en-PH');
+  let D = null, people = [], filtered = [], page = 1;
+
+  function fmtDate(d) {
+    if (!d) return '';
+    const p = String(d).split('-').map(Number);
+    if (p.length !== 3 || !p[0]) return d;
+    return new Date(p[0], p[1] - 1, p[2]).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' });
+  }
+
+  async function load() {
+    try {
+      if (C.API_URL) {
+        const r = await fetch(C.API_URL + (C.API_URL.indexOf('?') < 0 ? '?' : '&') + 'action=public');
+        D = await r.json();
+        if (!D.ok) throw new Error(D.error || 'Failed to load');
+      } else {
+        D = demoData();
+        $('#demo').hidden = false;
+      }
+      init();
+    } catch (e) {
+      console.error(e);
+      $('#stats').innerHTML = '';
+      $('#list').innerHTML = '<div class="empty">Sorry, the registry could not be loaded right now. Please refresh the page or try again later.</div>';
+    }
+  }
+
+  function init() {
+    if (D.title) { $('#title').textContent = D.title; document.title = D.title; }
+    if (D.subtitle !== undefined) $('#subtitle').textContent = D.subtitle;
+    $('#updated').textContent = D.updated ? 'Updated ' + D.updated : '';
+    const N = D.stages.length;
+    const idx = {};
+    D.stages.forEach((s, i) => idx[s.id] = i);
+    people = D.members.map(m => {
+      const si = idx[m.st] !== undefined ? idx[m.st] : -1;
+      const pct = N && si >= 0 ? Math.round((si + 1) / N * 100) : 0;
+      return Object.assign({}, m, {
+        si: si, pct: pct, invested: N > 0 && si === N - 1,
+        stageName: si >= 0 ? D.stages[si].name : '—',
+        key: (m.n + ' ' + m.ch + ' ' + m.di + ' ' + m.cl).toLowerCase()
+      });
+    });
+    renderStats();
+    fillFilters();
+    ['#q', '#fCluster', '#fDistrict', '#fChurch', '#fStage', '#fSort'].forEach(id => {
+      $(id).addEventListener(id === '#q' ? 'input' : 'change', e => {
+        if (id === '#fCluster') { $('#fDistrict').value = ''; $('#fChurch').value = ''; }
+        if (id === '#fDistrict') $('#fChurch').value = '';
+        if (id === '#fCluster' || id === '#fDistrict') fillPlaces();
+        page = 1; apply();
+      });
+    });
+    $('#clear').onclick = () => { $('#q').value = ''; ['#fCluster', '#fDistrict', '#fChurch', '#fStage'].forEach(i => $(i).value = ''); fillPlaces(); page = 1; apply(); };
+    apply();
+  }
+
+  function renderStats() {
+    const total = people.length;
+    const inv = people.filter(p => p.invested).length;
+    $('#stats').innerHTML =
+      stat(fmt(total), 'Master Guides listed') +
+      stat(fmt(inv), 'Invested', 'gold') +
+      stat(fmt(total - inv), 'In progress') +
+      stat(fmt(D.clusters.length), 'Clusters');
+    $('#stageFlow').innerHTML = D.stages.map((s, i) => {
+      const n = people.filter(p => p.si === i).length;
+      return '<button class="stage-chip" data-stage="' + esc(s.id) + '"><b>' + fmt(n) + '</b>' + (i + 1) + '. ' + esc(s.name) + '</button>';
+    }).join('') || '<span class="muted">No stages yet.</span>';
+    $('#stageFlow').onclick = e => {
+      const b = e.target.closest('.stage-chip'); if (!b) return;
+      $('#fStage').value = $('#fStage').value === b.dataset.stage ? '' : b.dataset.stage;
+      page = 1; apply();
+    };
+    $('#clusterBars').innerHTML = D.clusters.map(c => {
+      const all = people.filter(p => p.cl === c), inv = all.filter(p => p.invested).length;
+      const pct = all.length ? Math.round(inv / all.length * 100) : 0;
+      return '<div class="cbar" data-c="' + esc(c) + '"><div class="top"><b>' + esc(c) + '</b><span>' + fmt(inv) + ' / ' + fmt(all.length) + '</span></div>' +
+        '<div class="progress ' + (pct === 100 && all.length ? 'done' : '') + '"><span style="width:' + pct + '%"></span></div></div>';
+    }).join('') || '<span class="muted">No clusters yet.</span>';
+    $('#clusterBars').onclick = e => {
+      const b = e.target.closest('.cbar'); if (!b) return;
+      $('#fCluster').value = b.dataset.c; $('#fDistrict').value = ''; $('#fChurch').value = '';
+      fillPlaces(); page = 1; apply();
+      $('.filters').scrollIntoView({ behavior: 'smooth' });
+    };
+  }
+  const stat = (v, l, cls) => '<div class="stat ' + (cls || '') + '"><b>' + v + '</b><span>' + l + '</span></div>';
+
+  function opts(list, all) { return '<option value="">' + all + '</option>' + list.map(v => '<option>' + esc(v) + '</option>').join(''); }
+  const uniq = arr => Array.from(new Set(arr.filter(Boolean))).sort((a, b) => a.localeCompare(b));
+
+  function fillFilters() {
+    $('#fCluster').innerHTML = opts(D.clusters, 'All clusters');
+    $('#fStage').innerHTML = '<option value="">All stages</option>' + D.stages.map(s => '<option value="' + esc(s.id) + '">' + esc(s.name) + '</option>').join('');
+    fillPlaces();
+  }
+  function fillPlaces() {
+    const c = $('#fCluster').value, d = $('#fDistrict').value;
+    const inC = people.filter(p => !c || p.cl === c);
+    $('#fDistrict').innerHTML = opts(uniq(inC.map(p => p.di)), 'All districts');
+    $('#fDistrict').value = d;
+    const inD = inC.filter(p => !$('#fDistrict').value || p.di === $('#fDistrict').value);
+    const ch = $('#fChurch').value;
+    $('#fChurch').innerHTML = opts(uniq(inD.map(p => p.ch)), 'All churches');
+    $('#fChurch').value = ch;
+  }
+
+  function apply() {
+    const q = $('#q').value.trim().toLowerCase();
+    const c = $('#fCluster').value, d = $('#fDistrict').value, ch = $('#fChurch').value, st = $('#fStage').value;
+    const words = q.split(/\s+/).filter(Boolean);
+    filtered = people.filter(p =>
+      (!c || p.cl === c) && (!d || p.di === d) && (!ch || p.ch === ch) && (!st || p.st === st) &&
+      words.every(w => p.key.indexOf(w) >= 0));
+    const sort = $('#fSort').value;
+    filtered.sort((a, b) => {
+      if (sort === 'progress') return b.pct - a.pct || a.n.localeCompare(b.n);
+      if (sort === 'invested') return (b.inv || '').localeCompare(a.inv || '') || a.n.localeCompare(b.n);
+      return a.n.localeCompare(b.n);
+    });
+    document.querySelectorAll('.stage-chip').forEach(b => b.classList.toggle('active', b.dataset.stage === st));
+    $('#clear').hidden = !(q || c || d || ch || st);
+    render();
+  }
+
+  function render() {
+    const pages = Math.max(1, Math.ceil(filtered.length / PER));
+    if (page > pages) page = pages;
+    const slice = filtered.slice((page - 1) * PER, page * PER);
+    $('#meta').textContent = filtered.length
+      ? 'Showing ' + fmt((page - 1) * PER + 1) + '–' + fmt((page - 1) * PER + slice.length) + ' of ' + fmt(filtered.length) + ' Master Guide' + (filtered.length === 1 ? '' : 's')
+      : '';
+    $('#list').innerHTML = slice.length ? slice.map((p, i) => card(p, (page - 1) * PER + i)).join('') :
+      '<div class="empty">No Master Guide matches your search.</div>';
+    $('#pager').innerHTML = pages > 1 ? pager(pages) : '';
+  }
+
+  function card(p, i) {
+    const docs = D.showDocCount && D.docsTotal ? '<span>Documents ' + (p.dc || 0) + '/' + D.docsTotal + '</span>' : '<span></span>';
+    return '<article class="card ' + (p.invested ? 'invested' : '') + '" data-i="' + i + '" tabindex="0">' +
+      '<div class="card-top"><h3>' + esc(p.n) + '</h3>' + (p.invested ? '<span class="pill done">Invested</span>' : '') + '</div>' +
+      '<div class="where">' + esc([p.ch, p.di].filter(Boolean).join(' · ') || '—') + '<br>' + esc(p.cl) + '</div>' +
+      '<div class="progress ' + (p.invested ? 'done' : '') + '"><span style="width:' + p.pct + '%"></span></div>' +
+      '<div class="meta"><span class="pill ' + (p.invested ? 'done' : '') + '">' + esc(p.stageName) + '</span><b>' + p.pct + '%</b></div>' +
+      '<div class="meta">' + docs + '<span>' + (p.inv ? 'Invested ' + esc(fmtDate(p.inv)) : '') + '</span></div>' +
+      '</article>';
+  }
+
+  function pager(pages) {
+    const out = [], add = (n, label) => out.push('<button data-p="' + n + '" class="' + (n === page ? 'on' : '') + '">' + (label || n) + '</button>');
+    if (page > 1) add(page - 1, '‹ Prev');
+    const lo = Math.max(1, page - 2), hi = Math.min(pages, page + 2);
+    if (lo > 1) { add(1); if (lo > 2) out.push('<span class="muted">…</span>'); }
+    for (let n = lo; n <= hi; n++) add(n);
+    if (hi < pages) { if (hi < pages - 1) out.push('<span class="muted">…</span>'); add(pages); }
+    if (page < pages) add(page + 1, 'Next ›');
+    return out.join('');
+  }
+  $('#pager').onclick = e => { const b = e.target.closest('button[data-p]'); if (!b) return; page = Number(b.dataset.p); render(); $('.filters').scrollIntoView({ behavior: 'smooth' }); };
+
+  function openCard(el) {
+    const p = filtered[Number(el.dataset.i)]; if (!p) return;
+    const steps = D.stages.map((s, i) => {
+      const cls = (i < p.si || (p.invested && i === p.si)) ? 'done' : (i === p.si ? 'current' : '');
+      return '<li class="' + cls + (i === D.stages.length - 1 ? ' final' : '') + '"><span class="dot">' + (cls === 'done' ? '✓' : i + 1) + '</span>' + esc(s.name) + '</li>';
+    }).join('');
+    const dlg = $('#dlg');
+    dlg.innerHTML = '<div class="modal-head"><h2>' + esc(p.n) + '</h2><button class="x" aria-label="Close">×</button></div>' +
+      '<div class="modal-body">' +
+      '<div class="progress ' + (p.invested ? 'done' : '') + '"><span style="width:' + p.pct + '%"></span></div>' +
+      '<div style="display:flex;justify-content:space-between;margin-top:6px;font-size:14px"><span class="pill ' + (p.invested ? 'done' : '') + '">' + esc(p.stageName) + '</span><b>' + p.pct + '% complete</b></div>' +
+      '<dl class="info">' +
+      '<dt>Church</dt><dd>' + esc(p.ch || '—') + '</dd>' +
+      '<dt>District</dt><dd>' + esc(p.di || '—') + '</dd>' +
+      '<dt>Cluster</dt><dd>' + esc(p.cl || '—') + '</dd>' +
+      '<dt>Date of training</dt><dd>' + esc(fmtDate(p.td) || '—') + '</dd>' +
+      '<dt>Date invested</dt><dd>' + esc(fmtDate(p.inv) || '—') + '</dd>' +
+      (D.showDocCount && D.docsTotal ? '<dt>Documents</dt><dd>' + (p.dc || 0) + ' of ' + D.docsTotal + ' submitted</dd>' : '') +
+      '</dl><h3 style="font-size:14px">Progress</h3><ol class="steps">' + steps + '</ol></div>';
+    dlg.querySelector('.x').onclick = () => dlg.close();
+    dlg.showModal();
+  }
+  $('#list').addEventListener('click', e => { const c = e.target.closest('.card'); if (c) openCard(c); });
+  $('#list').addEventListener('keydown', e => { if (e.key === 'Enter') { const c = e.target.closest('.card'); if (c) openCard(c); } });
+  $('#dlg').addEventListener('click', e => { if (e.target.id === 'dlg') e.target.close(); });
+
+  /* ---------- sample data for preview (used only when API_URL is empty) ---------- */
+  function demoData() {
+    const stages = ['Enrolled', 'In Training', 'Requirements Complete', 'Approved for Investiture', 'Invested'].map((n, i) => ({ id: 'S' + i, name: n }));
+    const clusters = ['Cluster 1', 'Cluster 2', 'Cluster 3'];
+    const places = {
+      'Cluster 1': [['North District', ['Riverside Church', 'Hillcrest Church']], ['East District', ['Sunrise Church', 'Maple Church']]],
+      'Cluster 2': [['Central District', ['Central Church', 'Garden Church']], ['West District', ['Lakeview Church', 'Cedar Church']]],
+      'Cluster 3': [['Coastal District', ['Seaside Church', 'Harbor Church']], ['Island District', ['Palm Church', 'Bayview Church']]]
+    };
+    const first = ['Maria', 'Jose', 'Ana', 'Mark', 'Grace', 'John', 'Joy', 'Paul', 'Ruth', 'Daniel', 'Faith', 'Samuel', 'Hope', 'David', 'Esther', 'Joel', 'Mercy', 'Caleb'];
+    const last = ['Santos', 'Reyes', 'Cruz', 'Bautista', 'Garcia', 'Mendoza', 'Torres', 'Flores', 'Ramos', 'Villanueva', 'Castillo', 'Navarro', 'Aquino', 'Lim'];
+    let seed = 7; const rnd = n => { seed = (seed * 9301 + 49297) % 233280; return Math.floor(seed / 233280 * n); };
+    const members = [];
+    for (let i = 0; i < 140; i++) {
+      const cl = clusters[rnd(3)], dist = places[cl][rnd(2)], ch = dist[1][rnd(2)];
+      const si = rnd(10) < 4 ? 4 : rnd(4);
+      const yr = 2019 + rnd(6);
+      members.push({
+        n: first[rnd(first.length)] + ' ' + String.fromCharCode(65 + rnd(26)) + '. ' + last[rnd(last.length)],
+        cl: cl, di: dist[0], ch: ch, td: yr + '-0' + (1 + rnd(9)) + '-1' + rnd(9), inv: si === 4 ? (yr + 1) + '-0' + (1 + rnd(9)) + '-2' + rnd(8) : '',
+        st: 'S' + si, dc: si === 4 ? 6 : Math.min(6, si + rnd(3))
+      });
+    }
+    return { ok: true, title: 'Davao Mission Master Guides', subtitle: 'Master Guide Progress & Investiture Registry', showDocCount: true, docsTotal: 6, stages: stages, clusters: clusters, members: members, updated: '' };
+  }
+
+  load();
+})();
+</script>
+</body>
+</html>
