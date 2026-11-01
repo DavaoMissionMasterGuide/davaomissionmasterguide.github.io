@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Davao Mission Master Guides</title>
 <meta name="description" content="Master Guide progress and investiture registry of Davao Mission.">
-<link rel="stylesheet" href="style.css">
-<script src="config.js"></script>
+<link rel="stylesheet" href="style.css?v=3">
+<script src="config.js?v=3"></script>
 </head>
 <body class="public">
 <!-- ===== 5-second "classified file" intro ===== -->
@@ -101,12 +101,12 @@
 
   /* ---------- logo (your file) with a plain fallback badge ---------- */
   const FALLBACK_LOGO = 'data:image/svg+xml,' + encodeURIComponent(
-    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200"><circle cx="100" cy="100" r="94" fill="#13294b" stroke="#c99a2e" stroke-width="8"/>' +
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200"><circle cx="100" cy="100" r="94" fill="#3a4724" stroke="#c99a2e" stroke-width="8"/>' +
     '<circle cx="100" cy="100" r="78" fill="none" stroke="#c99a2e" stroke-width="2" stroke-dasharray="4 6"/>' +
     '<text x="100" y="122" text-anchor="middle" font-family="Georgia,serif" font-size="64" font-weight="700" fill="#f3d58a">MG</text></svg>');
   document.querySelectorAll('img.mg-logo').forEach(img => {
     img.onerror = () => { img.onerror = null; img.src = FALLBACK_LOGO; };
-    img.src = C.LOGO || 'logo.png';
+    img.src = (C.LOGO || 'logo.png') + '?v=' + (C.VERSION || 1);
   });
 
   /* ---------- 5-second intro ---------- */
