@@ -112,6 +112,7 @@
   function showLogin(msg) {
     const title = S.cfg.siteTitle || 'Master Guide Registry';
     $('#app').innerHTML = '<div class="login-wrap"><form class="login-card" id="loginForm" autocomplete="on">' +
+      '<img class="login-logo" src="' + esc(C.LOGO || 'logo.png') + '" alt="" onerror="this.remove()">' +
       '<div class="eyebrow">Admin</div><h1>' + esc(title) + '</h1><p class="muted small" style="margin-top:4px">Sign in to manage Master Guide records.</p>' +
       (msg ? '<div class="err">' + esc(msg) + '</div>' : '') +
       '<div class="field"><label for="lu">Username</label><input id="lu" autocomplete="username" required autocapitalize="none"></div>' +
