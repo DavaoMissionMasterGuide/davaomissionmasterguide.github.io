@@ -7,8 +7,8 @@
 <title>Admin · Master Guide Registry</title>
 <link rel="icon" href="logo.png">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-<link rel="stylesheet" href="style.css?v=4">
-<script src="config.js?v=5"></script>
+<link rel="stylesheet" href="style.css?v=6">
+<script src="config.js?v=6"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 </head>
 <body class="admin">
@@ -286,7 +286,7 @@
       '<div class="grid2"><div class="field"><label>Cluster *</label>' + clusterField + '</div>' +
       '<div class="field"><label>District</label><input id="fDi" list="dlDi" value="' + esc(m.district) + '"></div></div>' +
       '<div class="field"><label>Church</label><input id="fCh" list="dlCh" value="' + esc(m.church) + '"></div>' +
-      datalist('dlDi', S.members.map(x => x.district)) + datalist('dlCh', S.members.map(x => x.church)) +
+      datalist('dlDi', S.members.map(x => x.district).concat(S.places.map(x => x.district))) + datalist('dlCh', S.members.map(x => x.church).concat(S.places.map(x => x.church))) +
       '<div class="grid2"><div class="field"><label>Date of training</label><input id="fTd" type="date" value="' + esc(m.trainingDate) + '"></div>' +
       '<div class="field"><label>Date invested</label><input id="fInv" type="date" value="' + esc(m.investedDate) + '"></div></div>' +
       '<div class="field"><label>Progress stage</label><select id="fSt">' + S.stages.map((s, i) => '<option value="' + esc(s.id) + '"' + (s.id === m.stageId ? ' selected' : '') + '>' + (i + 1) + '. ' + esc(s.name) + '</option>').join('') + '</select>' +
@@ -535,20 +535,33 @@
   const MAP_DEFAULT = [7.2, 125.6];
   let pinMap = null, pinLayer = null, pinMarker = null, pinSel = null;
   const placeOf = it => S.places.find(p => p.type === it.type && p.cluster === it.cluster && (p.district || '') === (it.district || '') && (p.church || '') === (it.church || ''));
+  const drafts = [];   // districts/churches added here but not pinned yet
+  const uniqS = a => Array.from(new Set(a.filter(Boolean))).sort((x, y) => x.localeCompare(y));
   function placeTree() {
     const clusters = isDir() ? S.clusters.slice() : [S.user.cluster];
+    const all = S.places.concat(drafts);
     return clusters.map(cl => {
-      const inC = S.members.filter(m => m.cluster === cl);
-      const dists = Array.from(new Set(inC.map(m => m.district).filter(Boolean))).sort();
+      const inC = S.members.filter(m => m.cluster === cl), pC = all.filter(p => p.cluster === cl);
+      const dists = uniqS(inC.map(m => m.district).concat(pC.map(p => p.district)));
       return { type: 'cluster', cluster: cl, name: cl, kids: dists.map(di => ({
         type: 'district', cluster: cl, district: di, name: di,
-        kids: Array.from(new Set(inC.filter(m => m.district === di).map(m => m.church).filter(Boolean))).sort().map(ch => ({ type: 'church', cluster: cl, district: di, church: ch, name: ch }))
+        kids: uniqS(inC.filter(m => m.district === di).map(m => m.church).concat(pC.filter(p => p.district === di).map(p => p.church)))
+          .map(ch => ({ type: 'church', cluster: cl, district: di, church: ch, name: ch }))
       })) };
     });
   }
+  function addDraft(type, cluster, district) {
+    const name = (prompt(type === 'district' ? 'New district name in ' + cluster + ':' : 'New church name in ' + district + ' (' + cluster + '):') || '').replace(/\s+/g, ' ').trim();
+    if (!name) return;
+    const it = type === 'district' ? { type: 'district', cluster: cluster, district: name, church: '' } : { type: 'church', cluster: cluster, district: district, church: name };
+    drafts.push(it);
+    $('#pq').value = '';
+    selectPlace(it);
+    toast('Now find the address or click the map, then Save pin to keep it.', 'ok');
+  }
   function viewMap(v) {
     v.innerHTML = '<div class="card-box"><h2>Map pins</h2><p class="muted small">Put a pin on the map for each church (and optionally each district and cluster). The public dashboard map uses these pins. ' +
-      'Districts and clusters without their own pin are placed in the middle of their churches automatically. Districts and churches come from your Master Guide records.</p>' +
+      'Districts and clusters without their own pin are placed in the middle of their churches automatically. Use <b>+ Add district</b> and <b>+ Add church</b> to build the list: Cluster → District → Church. Districts and churches from your Master Guide records also appear automatically.</p>' +
       '<div class="pin-layout"><div class="pin-tree"><input type="search" id="pq" placeholder="Search cluster, district, church…"><div id="ptree"></div></div>' +
       '<div class="pin-side"><div id="pinfo" class="pin-info"><span class="muted">← Choose a cluster, district or church from the list.</span></div><div class="pin-map"><div id="pmap"></div></div></div></div></div>';
     $('#pq').oninput = drawTree;
@@ -575,12 +588,17 @@
       c.kids.forEach(d => {
         const dm = cm || d.name.toLowerCase().includes(q);
         const hRows = d.kids.filter(h => dm || h.name.toLowerCase().includes(q)).map(h => row(h, 2));
-        if (dm || hRows.length) dRows.push(row(d, 1) + hRows.join(''));
+        const addH = q ? '' : '<button class="ptree-add d2" data-add="church" data-cl="' + esc(d.cluster) + '" data-di="' + esc(d.district) + '">+ Add church</button>';
+        if (dm || hRows.length) dRows.push(row(d, 1) + hRows.join('') + addH);
       });
-      if (cm || dRows.length) out.push(row(c, 0) + dRows.join(''));
+      const addD = '<button class="ptree-add d1" data-add="district" data-cl="' + esc(c.cluster) + '">+ Add district</button>';
+      if (cm || dRows.length) out.push(row(c, 0) + dRows.join('') + (q ? '' : addD));
     });
     $('#ptree').innerHTML = out.join('') || '<p class="muted small">Nothing found. Add Master Guides with district and church first.</p>';
-    $('#ptree').onclick = e => { const b = e.target.closest('.ptree-row'); if (b) selectPlace(JSON.parse(b.dataset.k)); };
+    $('#ptree').onclick = e => {
+      const a = e.target.closest('.ptree-add'); if (a) return addDraft(a.dataset.add, a.dataset.cl, a.dataset.di);
+      const b = e.target.closest('.ptree-row'); if (b) selectPlace(JSON.parse(b.dataset.k));
+    };
   }
   function drawPins() {
     if (!pinLayer) return;

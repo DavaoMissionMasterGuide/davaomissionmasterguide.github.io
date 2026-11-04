@@ -329,3 +329,6 @@ body.intro-on{overflow:hidden}
 .presults button{text-align:left;font-weight:500;font-size:13px}
 .pin-map{position:relative;height:460px;border-radius:10px;overflow:hidden;border:1px solid var(--line)}
 #pmap{position:absolute;inset:0}
+.ptree-add{display:block;width:100%;text-align:left;border:0;border-bottom:1px solid #eef0e6;border-radius:0;background:none;color:var(--green);font-size:13px;font-weight:700;padding:6px 10px}
+.ptree-add.d1{padding-left:24px}.ptree-add.d2{padding-left:42px}
+.ptree-add:hover{background:var(--green-soft)}

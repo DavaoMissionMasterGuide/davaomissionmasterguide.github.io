@@ -7,8 +7,8 @@
 <meta name="description" content="Master Guide progress and investiture registry of Davao Mission.">
 <link rel="icon" href="logo.png">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-<link rel="stylesheet" href="style.css?v=4">
-<script src="config.js?v=5"></script>
+<link rel="stylesheet" href="style.css?v=6">
+<script src="config.js?v=6"></script>
 </head>
 <body class="public">
 <!-- ===== 5-second "classified file" intro ===== -->
@@ -275,18 +275,21 @@
   const avg = pts => pts.length ? [pts.reduce((s, p) => s + p[0], 0) / pts.length, pts.reduce((s, p) => s + p[1], 0) / pts.length] : null;
   function posChurch(cl, di, ch) { return P.church[kH(cl, di, ch)] || null; }
   function posDistrict(cl, di) {
-    return P.district[kD(cl, di)] || avg(uniq(people.filter(p => p.cl === cl && p.di === di).map(p => p.ch)).map(ch => posChurch(cl, di, ch)).filter(Boolean));
+    return P.district[kD(cl, di)] || avg(uniq(people.filter(p => p.cl === cl && p.di === di).map(p => p.ch).concat(D.places.filter(p => p.cl === cl && p.di === di).map(p => p.ch))).map(ch => posChurch(cl, di, ch)).filter(Boolean));
   }
   function posCluster(cl) {
-    return P.cluster[kC(cl)] || avg(uniq(people.filter(p => p.cl === cl).map(p => p.di)).map(di => posDistrict(cl, di)).filter(Boolean));
+    return P.cluster[kC(cl)] || avg(uniq(people.filter(p => p.cl === cl).map(p => p.di).concat(D.places.filter(p => p.cl === cl).map(p => p.di))).map(di => posDistrict(cl, di)).filter(Boolean));
   }
   const stats = list => { const t = list.length, i = list.filter(p => p.invested).length; return { t: t, i: i, pct: t ? Math.round(i / t * 100) : 0 }; };
 
   function children() {
-    // the items one level below the current selection
+    // the items one level below the current selection (from records + map pins)
+    const pl = D.places;
     if (!drill.cl) return uniq(D.clusters.concat(people.map(p => p.cl))).map(cl => ({ level: 'cluster', name: cl, cl: cl, list: people.filter(p => p.cl === cl), pos: posCluster(cl) }));
-    if (!drill.di) return uniq(people.filter(p => p.cl === drill.cl).map(p => p.di)).map(di => ({ level: 'district', name: di, cl: drill.cl, di: di, list: people.filter(p => p.cl === drill.cl && p.di === di), pos: posDistrict(drill.cl, di) }));
-    return uniq(people.filter(p => p.cl === drill.cl && p.di === drill.di).map(p => p.ch)).map(ch => ({ level: 'church', name: ch, cl: drill.cl, di: drill.di, ch: ch, list: people.filter(p => p.cl === drill.cl && p.di === drill.di && p.ch === ch), pos: posChurch(drill.cl, drill.di, ch) }));
+    if (!drill.di) return uniq(people.filter(p => p.cl === drill.cl).map(p => p.di).concat(pl.filter(p => p.cl === drill.cl).map(p => p.di)))
+      .map(di => ({ level: 'district', name: di, cl: drill.cl, di: di, list: people.filter(p => p.cl === drill.cl && p.di === di), pos: posDistrict(drill.cl, di) }));
+    return uniq(people.filter(p => p.cl === drill.cl && p.di === drill.di).map(p => p.ch).concat(pl.filter(p => p.cl === drill.cl && p.di === drill.di).map(p => p.ch)))
+      .map(ch => ({ level: 'church', name: ch, cl: drill.cl, di: drill.di, ch: ch, list: people.filter(p => p.cl === drill.cl && p.di === drill.di && p.ch === ch), pos: posChurch(drill.cl, drill.di, ch) }));
   }
 
   function setDrill(cl, di, ch, opt) {
