@@ -353,3 +353,8 @@ body.intro-on{overflow:hidden}
 .doclist li.no span,.doclist li.no em{color:#9a9c88}
 .profile .steps li{padding:5px 0}
 @media (max-width:640px){.prof-hero{grid-template-columns:1fr}.prof-status{text-align:left}}
+/* trainings */
+.tr-form{border:1px solid var(--line);border-radius:10px;padding:12px;background:#fff;margin-bottom:12px}
+.tr-act{white-space:nowrap;text-align:right}.tr-act .btn-sm{margin-left:4px}
+.tr-table{width:100%;font-size:13.5px;margin-bottom:6px}.tr-table td{padding:6px 4px;border-bottom:1px solid #eceee3}
+.tr-add summary{cursor:pointer;color:var(--green);font-weight:700;font-size:13px}

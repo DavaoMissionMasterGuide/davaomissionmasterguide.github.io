@@ -26,14 +26,26 @@ const SHEETS = {
   Settings:  ['key', 'value'],
   Log:       ['time', 'user', 'action', 'detail'],
   Places:    ['type', 'cluster', 'district', 'church', 'lat', 'lng', 'address', 'updatedAt', 'updatedBy'],
-  Requests:  ['id', 'type', 'userId', 'username', 'memberId', 'cluster', 'payload', 'status', 'createdAt', 'decidedBy', 'decidedAt', 'reply']
+  Requests:  ['id', 'type', 'userId', 'username', 'memberId', 'cluster', 'payload', 'status', 'createdAt', 'decidedBy', 'decidedAt', 'reply'],
+  Trainings: ['id', 'name', 'order'],
+  PersonTrainings: ['id', 'memberId', 'cluster', 'trainingId', 'customName', 'date', 'place', 'notes', 'status', 'certFileId', 'certName', 'addedBy', 'addedAt', 'verifiedBy', 'verifiedAt', 'reply']
 };
 
+// Starting list of trainings (the Director can edit it in the admin site).
+// Club Ministries Training (CMT) is the current GC curriculum; PLA / APLA-PIA are the older awards it replaces.
+const DEFAULT_TRAININGS = [
+  'CMT – Pathfinder Basic Staff Training (BST)', 'CMT – Pathfinder Counselor', 'CMT – Pathfinder Club Instructor',
+  'CMT – Pathfinder Club Secretary/Treasurer', 'CMT – Pathfinder Club Director',
+  'CMT – Adventurer Basic Staff Training', 'CMT – Adventurer Club Director',
+  'Pathfinder Leadership Award (PLA)', 'Advanced Pathfinder Leadership Award (APLA) / Pathfinder Instructor Award (PIA)',
+  'Master Guide Leadership Training (workshops)'
+];
+
 // Actions a Master Guide (role "member") may use. Everything else is for coordinators and the Director.
-const MEMBER_ACTIONS = ['me', 'logout', 'changePassword', 'myProfile', 'updateContact', 'requestChange', 'myCert'];
+const MEMBER_ACTIONS = ['me', 'logout', 'changePassword', 'myProfile', 'updateContact', 'requestChange', 'myCert', 'addMyTraining', 'deleteMyTraining', 'myTrainingCert'];
 const CHANGE_FIELDS = { fullName: 'Full name', district: 'District', church: 'Church', trainingDate: 'Date of training', investedDate: 'Date invested', other: 'Other' };
 
-const READ_ONLY = ['me', 'bootstrap', 'getCert', 'listUsers', 'getLog', 'myProfile', 'myCert', 'listRequests'];
+const READ_ONLY = ['me', 'bootstrap', 'getCert', 'listUsers', 'getLog', 'myProfile', 'myCert', 'listRequests', 'listMemberTrainings', 'getTrainingCert', 'myTrainingCert'];
 
 const ACTIONS = {
   me: (u) => ({ user: pubUser_(u) }),
@@ -62,7 +74,16 @@ const ACTIONS = {
   myCert: myCert_,
   listRequests: listRequests_,
   decideRequest: decideRequest_,
-  setMemberAccount: setMemberAccount_
+  setMemberAccount: setMemberAccount_,
+  saveTrainings: (u, r) => saveList_(u, r, 'Trainings'),
+  listMemberTrainings: listMemberTrainings_,
+  saveMemberTraining: saveMemberTraining_,
+  deleteMemberTraining: deleteMemberTraining_,
+  verifyTraining: verifyTraining_,
+  getTrainingCert: getTrainingCert_,
+  addMyTraining: addMyTraining_,
+  deleteMyTraining: deleteMyTraining_,
+  myTrainingCert: myTrainingCert_
 };
 
 /* ============================== SETUP ============================== */
@@ -88,6 +109,9 @@ function setup() {
   if (!readAll_('Documents').length) {
     writeAll_('Documents', ['Application Form', "Pastor's Recommendation", 'Pathfinder / AY Class Record', 'Training Attendance', 'Practicum Requirements', 'Medical Certificate']
       .map((n, i) => ({ id: newId_('D'), name: n, order: i + 1 })));
+  }
+  if (!readAll_('Trainings').length) {
+    writeAll_('Trainings', DEFAULT_TRAININGS.map((n, i) => ({ id: newId_('T'), name: n, order: i + 1 })));
   }
   if (!readAll_('Clusters').length) {
     writeAll_('Clusters', [{ name: 'Cluster 1' }, { name: 'Cluster 2' }, { name: 'Cluster 3' }]);
@@ -299,7 +323,9 @@ function bootstrap_(u) {
     places: placesFor_(u),
     memberAccounts: readAll_('Users').filter(x => x.role === 'member' && x.memberId && (isDir_(u) || x.cluster === u.cluster))
       .map(x => ({ userId: x.id, username: x.username, memberId: x.memberId, active: x.active, lastLogin: x.lastLogin, email: x.email })),
-    pendingRequests: readAll_('Requests').filter(x => x.status === 'pending' && (isDir_(u) || x.cluster === u.cluster)).length,
+    pendingRequests: readAll_('Requests').filter(x => x.status === 'pending' && (isDir_(u) || x.cluster === u.cluster)).length +
+      readAll_('PersonTrainings').filter(x => x.status === 'pending' && (isDir_(u) || x.cluster === u.cluster)).length,
+    trainings: trainingCatalog_(),
     settings: isDir_(u)
       ? { siteTitle: s.siteTitle || '', subtitle: s.subtitle || '', showDocCount: s.showDocCount !== 'false', googleClientId: s.googleClientId || '' }
       : { siteTitle: s.siteTitle || '' }
@@ -353,6 +379,7 @@ function deleteMember_(u, r) {
     if (!canEdit_(u, m)) throw new Error('You can only manage Master Guides in ' + u.cluster + '.');
     if (m.certFileId) { try { DriveApp.getFileById(m.certFileId).setTrashed(true); } catch (_) {} }
     sheet_('Members').deleteRow(m._row);
+    readAll_('PersonTrainings').filter(x => x.memberId === m.id).reverse().forEach(x => { trash_(x.certFileId); sheet_('PersonTrainings').deleteRow(x._row); });
     readAll_('Users').filter(x => x.role === 'member' && x.memberId === m.id).forEach(x => { x.memberId = ''; x.active = 'false'; updateRow_('Users', x._row, x); });
     log_(u, 'Delete Master Guide', m.fullName + ' (' + m.cluster + ')');
     return {};
@@ -465,7 +492,7 @@ function removeCert_(u, r) {
 
 function saveList_(u, r, name) {
   requireDir_(u);
-  const label = name === 'Stages' ? 'stage' : 'document';
+  const label = name === 'Stages' ? 'stage' : name === 'Trainings' ? 'training' : 'document';
   const items = (Array.isArray(r.items) ? r.items : []).map(x => ({ id: String(x.id || ''), name: clean_(x.name, 80) }));
   if (items.some(x => !x.name)) throw new Error('Every ' + label + ' needs a name.');
   if (name === 'Stages' && !items.length) throw new Error('Keep at least one stage.');
@@ -476,7 +503,7 @@ function saveList_(u, r, name) {
     const old = readAll_(name);
     const oldIds = {};
     old.forEach(o => oldIds[o.id] = true);
-    items.forEach(x => { if (!x.id || !oldIds[x.id]) x.id = newId_(name === 'Stages' ? 'S' : 'D'); });
+    items.forEach(x => { if (!x.id || !oldIds[x.id]) x.id = newId_(name === 'Stages' ? 'S' : name === 'Trainings' ? 'T' : 'D'); });
     if (name === 'Stages') {
       const keep = {};
       items.forEach(x => keep[x.id] = true);
@@ -522,6 +549,7 @@ function saveClusters_(u, r) {
       renameColumn_('Users', 'cluster', renames);
       renameColumn_('Places', 'cluster', renames);
       renameColumn_('Requests', 'cluster', renames);
+      renameColumn_('PersonTrainings', 'cluster', renames);
     }
     writeAll_('Clusters', items.map(x => ({ name: x.name })));
     log_(u, 'Update clusters', items.map(x => x.name).join(', '));
@@ -709,7 +737,9 @@ function myProfile_(u) {
     member: m ? memberOut_(m) : null,
     stages: sortedList_('Stages'),
     documents: sortedList_('Documents'),
-    requests: readAll_('Requests').filter(x => x.userId === u.id && x.type === 'change').map(requestOut_).reverse().slice(0, 30)
+    requests: readAll_('Requests').filter(x => x.userId === u.id && x.type === 'change').map(requestOut_).reverse().slice(0, 30),
+    trainings: trainingCatalog_(),
+    myTrainings: m ? trainingsOf_(m.id) : []
   };
 }
 
@@ -759,7 +789,10 @@ function listRequests_(u) {
   const all = readAll_('Requests').filter(x => isDir_(u) || x.cluster === u.cluster).map(requestOut_);
   const pending = all.filter(x => x.status === 'pending');
   const decided = all.filter(x => x.status !== 'pending').reverse().slice(0, 50);
-  return { pending: pending, decided: decided };
+  const tr = readAll_('PersonTrainings').filter(x => x.status === 'pending' && (isDir_(u) || x.cluster === u.cluster));
+  const names = {};
+  if (tr.length) readAll_('Members').forEach(m => names[m.id] = m.fullName);
+  return { pending: pending, decided: decided, trainings: tr.map(x => Object.assign(trainingOut_(x), { fullName: names[x.memberId] || '' })) };
 }
 
 function decideRequest_(u, r) {
@@ -842,6 +875,143 @@ function setMemberAccount_(u, r) {
     log_(u, 'Update profile account', acct.username + (r.password ? ' (password reset)' : '') + (r.active !== undefined ? (r.active ? ' (enabled)' : ' (disabled)') : ''));
     return { account: { userId: acct.id, username: acct.username, memberId: acct.memberId, active: acct.active, lastLogin: acct.lastLogin, email: acct.email } };
   });
+}
+
+/* ============================== PERSONAL TRAININGS ============================== */
+
+function trainingCatalog_() {
+  // falls back to the default list until setup has filled the sheet
+  const t = sortedList_('Trainings');
+  if (!t.length) { writeAll_('Trainings', DEFAULT_TRAININGS.map((n, i) => ({ id: newId_('T'), name: n, order: i + 1 }))); return sortedList_('Trainings'); }
+  return t;
+}
+function trainingOut_(x) {
+  return { id: x.id, memberId: x.memberId, cluster: x.cluster, trainingId: x.trainingId, customName: x.customName, date: x.date, place: x.place,
+    notes: x.notes, status: x.status, hasCert: !!x.certFileId, certName: x.certName, addedBy: x.addedBy, addedAt: x.addedAt,
+    verifiedBy: x.verifiedBy, verifiedAt: x.verifiedAt, reply: x.reply };
+}
+function trainingsOf_(memberId) {
+  return readAll_('PersonTrainings').filter(x => x.memberId === memberId).map(trainingOut_)
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+}
+function trash_(fileId) { if (fileId) { try { DriveApp.getFileById(fileId).setTrashed(true); } catch (_) {} } }
+
+function trainingInput_(d) {
+  const ids = trainingCatalog_().map(t => t.id);
+  const trainingId = ids.indexOf(String(d.trainingId || '')) >= 0 ? String(d.trainingId) : '';
+  const customName = trainingId ? '' : clean_(d.customName, 120);
+  if (!trainingId && !customName) throw new Error('Choose a training from the list or type its name.');
+  return { trainingId: trainingId, customName: customName, date: date_(d.date, 'Date completed'), place: clean_(d.place, 150), notes: clean_(d.notes, 300) };
+}
+function saveTrainingFile_(m, d) {
+  if (!d || !d.data) return null;
+  const mime = String(d.mime || '');
+  if (ALLOWED_CERT_TYPES.indexOf(mime) < 0) throw new Error('Certificate must be a PDF, JPG or PNG file.');
+  const bytes = Utilities.base64Decode(String(d.data));
+  if (!bytes.length) throw new Error('The file is empty.');
+  if (bytes.length > MAX_CERT_BYTES) throw new Error('File is too large (maximum 5 MB).');
+  const name = clean_(d.name, 100) || 'training-certificate';
+  const f = certFolder_().createFile(Utilities.newBlob(bytes, mime, m.fullName.replace(/[\\\/:*?"<>|]+/g, '') + ' - training - ' + name));
+  return { id: f.getId(), name: name };
+}
+function memberFor_(u, memberId) {
+  const m = readAll_('Members').find(x => x.id === memberId);
+  if (!m) throw new Error('Record not found.');
+  if (!canEdit_(u, m)) throw new Error('You can only manage Master Guides in ' + u.cluster + '.');
+  return m;
+}
+
+// ---- coordinators / Director ----
+function listMemberTrainings_(u, r) {
+  memberFor_(u, r.memberId);
+  return { items: trainingsOf_(r.memberId) };
+}
+function saveMemberTraining_(u, r) {
+  const d = r.entry || {};
+  const t = trainingInput_(d);
+  return withLock_(() => {
+    const m = memberFor_(u, d.memberId);
+    const all = readAll_('PersonTrainings');
+    let ex = null;
+    if (d.id) { ex = all.find(x => x.id === d.id && x.memberId === m.id); if (!ex) throw new Error('Training entry not found.'); }
+    const file = saveTrainingFile_(m, r.file);
+    const rec = Object.assign({
+      id: ex ? ex.id : newId_('PT'), memberId: m.id, cluster: m.cluster, status: 'verified',
+      certFileId: ex ? ex.certFileId : '', certName: ex ? ex.certName : '',
+      addedBy: ex ? ex.addedBy : u.username, addedAt: ex ? ex.addedAt : nowStr_(), verifiedBy: u.username, verifiedAt: nowStr_(), reply: ex ? ex.reply : ''
+    }, t);
+    if (file) { if (ex) trash_(ex.certFileId); rec.certFileId = file.id; rec.certName = file.name; }
+    if (ex) updateRow_('PersonTrainings', ex._row, rec); else appendRows_('PersonTrainings', [rec]);
+    log_(u, ex ? 'Edit training' : 'Add training', m.fullName + ': ' + (t.customName || trainingCatalog_().find(x => x.id === t.trainingId).name));
+    return { items: trainingsOf_(m.id) };
+  });
+}
+function deleteMemberTraining_(u, r) {
+  return withLock_(() => {
+    const x = readAll_('PersonTrainings').find(y => y.id === r.id);
+    if (!x) throw new Error('Training entry not found.');
+    const m = memberFor_(u, x.memberId);
+    trash_(x.certFileId);
+    sheet_('PersonTrainings').deleteRow(x._row);
+    log_(u, 'Delete training', m.fullName);
+    return { items: trainingsOf_(m.id) };
+  });
+}
+function verifyTraining_(u, r) {
+  return withLock_(() => {
+    const x = readAll_('PersonTrainings').find(y => y.id === r.id);
+    if (!x) throw new Error('Training entry not found.');
+    const m = memberFor_(u, x.memberId);
+    x.status = r.approve ? 'verified' : 'rejected';
+    x.verifiedBy = u.username; x.verifiedAt = nowStr_(); x.reply = clean_(r.reply, 300);
+    updateRow_('PersonTrainings', x._row, x);
+    log_(u, (r.approve ? 'Verify' : 'Reject') + ' training', m.fullName);
+    return { items: trainingsOf_(m.id) };
+  });
+}
+function getTrainingCert_(u, r) {
+  const x = readAll_('PersonTrainings').find(y => y.id === r.id);
+  if (!x || !x.certFileId) throw new Error('No certificate for this training.');
+  memberFor_(u, x.memberId);
+  const blob = DriveApp.getFileById(x.certFileId).getBlob();
+  return { name: x.certName, mime: blob.getContentType(), data: Utilities.base64Encode(blob.getBytes()) };
+}
+
+// ---- the Master Guide themselves ----
+function addMyTraining_(u, r) {
+  const t = trainingInput_(r.entry || {});
+  return withLock_(() => {
+    const m = myMember_(u);
+    if (!m) throw new Error('Your account is not linked to a Master Guide record yet.');
+    const all = readAll_('PersonTrainings');
+    if (all.filter(x => x.memberId === m.id && x.status === 'pending').length >= 10) throw new Error('You have 10 trainings waiting for verification. Please wait for your coordinator.');
+    const file = saveTrainingFile_(m, r.file);
+    appendRows_('PersonTrainings', [Object.assign({
+      id: newId_('PT'), memberId: m.id, cluster: m.cluster, status: 'pending',
+      certFileId: file ? file.id : '', certName: file ? file.name : '',
+      addedBy: u.username, addedAt: nowStr_(), verifiedBy: '', verifiedAt: '', reply: ''
+    }, t)]);
+    log_(u, 'Add own training', m.fullName);
+    return { myTrainings: trainingsOf_(m.id) };
+  });
+}
+function deleteMyTraining_(u, r) {
+  return withLock_(() => {
+    const m = myMember_(u);
+    const x = m && readAll_('PersonTrainings').find(y => y.id === r.id && y.memberId === m.id);
+    if (!x) throw new Error('Training entry not found.');
+    if (x.status === 'verified') throw new Error('A verified training can only be removed by your coordinator.');
+    trash_(x.certFileId);
+    sheet_('PersonTrainings').deleteRow(x._row);
+    return { myTrainings: trainingsOf_(m.id) };
+  });
+}
+function myTrainingCert_(u, r) {
+  const m = myMember_(u);
+  const x = m && readAll_('PersonTrainings').find(y => y.id === r.id && y.memberId === m.id);
+  if (!x || !x.certFileId) throw new Error('No certificate for this training.');
+  const blob = DriveApp.getFileById(x.certFileId).getBlob();
+  return { name: x.certName, mime: blob.getContentType(), data: Utilities.base64Encode(blob.getBytes()) };
 }
 
 /* ============================== SETTINGS & LOG ============================== */

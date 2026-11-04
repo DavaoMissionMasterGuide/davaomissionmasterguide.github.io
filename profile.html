@@ -6,8 +6,8 @@
 <meta name="robots" content="noindex">
 <title>My Profile · Master Guide Registry</title>
 <link rel="icon" href="logo.png">
-<link rel="stylesheet" href="style.css?v=7">
-<script src="config.js?v=7"></script>
+<link rel="stylesheet" href="style.css?v=8">
+<script src="config.js?v=8"></script>
 </head>
 <body class="admin profile">
 <div id="app"><div class="login-wrap"><div class="login-card">Loading…</div></div></div>
@@ -207,6 +207,7 @@
       '<h2 style="margin-top:18px">Certificate</h2>' + (m.hasCert ? '<p class="muted small">Your certificate is on file.</p><button class="btn-primary" id="cert">Download my certificate</button>' : '<p class="muted small">No certificate uploaded yet. Your coordinator uploads it after investiture.</p>') + '</section>' +
       '</div>' +
 
+      trainingsCard(P) +
       '<div class="two-col">' +
       '<form class="card-box" id="contact"><h2>My contact info</h2><p class="muted small">Only you and your coordinators can see this. It is never shown publicly.</p>' +
       '<div class="field"><label>Mobile number</label><input id="cPh" inputmode="tel" value="' + esc(m.phone) + '"></div>' +
@@ -229,6 +230,7 @@
       '</main>';
 
     $('#out').onclick = () => signOut();
+    bindTrainings();
     if ($('#cert')) $('#cert').onclick = e => busy(e.target, async () => {
       const j = await api('myCert');
       const bin = atob(j.data), bytes = new Uint8Array(bin.length);
@@ -254,6 +256,62 @@
       if ($('#pN1').value.length < 8) return toast('New password must be at least 8 characters.', 'err');
       if ($('#pN1').value !== $('#pN2').value) return toast('The new passwords do not match.', 'err');
       busy($('#pBtn'), async () => { await api('changePassword', { oldPassword: $('#pOld').value, newPassword: $('#pN1').value }); toast('Password changed.', 'ok'); ['#pOld', '#pN1', '#pN2'].forEach(i => $(i).value = ''); });
+    };
+  }
+
+  /* ---------------- personal trainings ---------------- */
+  const tName = (P, t) => t.customName || ((P.trainings.find(x => x.id === t.trainingId) || {}).name) || 'Training';
+  const ST = { verified: ['done', 'Verified'], pending: ['gold', 'Waiting for verification'], rejected: ['off', 'Not accepted'] };
+  function trainingsCard(P) {
+    const rows = P.myTrainings.map(t => '<tr><td><b>' + esc(tName(P, t)) + '</b>' + (t.notes ? '<div class="small muted">' + esc(t.notes) + '</div>' : '') + '</td>' +
+      '<td>' + esc(fmtDate(t.date) || '—') + '</td><td>' + esc(t.place || '—') + '</td>' +
+      '<td><span class="pill ' + ST[t.status][0] + '">' + ST[t.status][1] + '</span>' + (t.reply ? '<div class="small muted">' + esc(t.reply) + '</div>' : '') + '</td>' +
+      '<td class="tr-act">' + (t.hasCert ? '<button type="button" class="btn-sm" data-cert="' + esc(t.id) + '">Certificate</button>' : '') +
+      (t.status !== 'verified' ? '<button type="button" class="btn-sm btn-danger" data-del="' + esc(t.id) + '">Remove</button>' : '') + '</td></tr>').join('');
+    const verified = P.myTrainings.filter(t => t.status === 'verified').length;
+    return '<section class="card-box"><div class="sec-head"><h2>My trainings <span class="muted small">' + verified + ' verified</span></h2><button type="button" class="btn-primary btn-sm" id="tAddBtn">+ Add a training</button></div>' +
+      '<p class="muted small" style="margin-top:0">Pathfinder, Adventurer and leadership trainings you have completed. Your Cluster Coordinator verifies each one.</p>' +
+      '<form id="tForm" class="tr-form" hidden><div class="grid2"><div class="field"><label>Training *</label><select id="tId"><option value="">Choose…</option>' +
+      P.trainings.map(t => '<option value="' + esc(t.id) + '">' + esc(t.name) + '</option>').join('') + '<option value="__other">Other (type the name)…</option></select></div>' +
+      '<div class="field" id="tOtherWrap" hidden><label>Training name *</label><input id="tOther" placeholder="e.g. Youth Evangelism Seminar"></div></div>' +
+      '<div class="grid2"><div class="field"><label>Date completed</label><input id="tDate" type="date"></div><div class="field"><label>Venue / organizer</label><input id="tPlace" placeholder="e.g. Davao Mission Camp, SEPUC"></div></div>' +
+      '<div class="field"><label>Notes <span class="muted">(optional)</span></label><input id="tNotes"></div>' +
+      '<div class="field"><label>Certificate <span class="muted">(optional — PDF, JPG or PNG, max 5 MB)</span></label><input type="file" id="tFile" accept="application/pdf,image/jpeg,image/png"></div>' +
+      '<div class="toolbar" style="margin:0"><button type="button" id="tCancel">Cancel</button><span class="spacer"></span><button class="btn-primary" id="tSave">Send for verification</button></div></form>' +
+      (rows ? '<div class="table-wrap" style="box-shadow:none"><table><thead><tr><th>Training</th><th>Completed</th><th>Venue / organizer</th><th>Status</th><th></th></tr></thead><tbody id="tBody">' + rows + '</tbody></table></div>'
+        : '<p class="muted" id="tEmpty">No trainings added yet.</p>') + '</section>';
+  }
+  function fileToBase64(file) {
+    return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1] || ''); r.onerror = () => rej(new Error('Could not read the file.')); r.readAsDataURL(file); });
+  }
+  function download(j) {
+    const bin = atob(j.data), bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const url = URL.createObjectURL(new Blob([bytes], { type: j.mime }));
+    const a = document.createElement('a'); a.href = url; a.download = j.name || 'certificate'; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  }
+  function bindTrainings() {
+    const form = $('#tForm');
+    $('#tAddBtn').onclick = () => { form.hidden = false; $('#tId').focus(); };
+    $('#tCancel').onclick = () => { form.hidden = true; form.reset(); $('#tOtherWrap').hidden = true; };
+    $('#tId').onchange = () => { $('#tOtherWrap').hidden = $('#tId').value !== '__other'; };
+    form.onsubmit = e => {
+      e.preventDefault();
+      const id = $('#tId').value, file = $('#tFile').files[0];
+      if (!id) return toast('Please choose a training.', 'err');
+      if (file && file.size > 5 * 1024 * 1024) return toast('The certificate is larger than 5 MB.', 'err');
+      busy($('#tSave'), async () => {
+        const f = file ? { name: file.name, mime: file.type, data: await fileToBase64(file) } : null;
+        const j = await api('addMyTraining', { entry: { trainingId: id === '__other' ? '' : id, customName: id === '__other' ? $('#tOther').value : '', date: $('#tDate').value, place: $('#tPlace').value, notes: $('#tNotes').value }, file: f });
+        S.prof.myTrainings = j.myTrainings; renderProfile(); toast('Training sent to your coordinator for verification.', 'ok');
+      });
+    };
+    const body = $('#tBody');
+    if (body) body.onclick = e => {
+      const c = e.target.closest('[data-cert]'), d = e.target.closest('[data-del]');
+      if (c) busy(c, async () => download(await api('myTrainingCert', { id: c.dataset.cert })));
+      if (d && confirm('Remove this training?')) busy(d, async () => { const j = await api('deleteMyTraining', { id: d.dataset.del }); S.prof.myTrainings = j.myTrainings; renderProfile(); });
     };
   }
 

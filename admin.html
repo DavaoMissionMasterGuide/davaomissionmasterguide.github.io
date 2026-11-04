@@ -7,8 +7,8 @@
 <title>Admin · Master Guide Registry</title>
 <link rel="icon" href="logo.png">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-<link rel="stylesheet" href="style.css?v=7">
-<script src="config.js?v=7"></script>
+<link rel="stylesheet" href="style.css?v=8">
+<script src="config.js?v=8"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 </head>
 <body class="admin">
@@ -102,7 +102,7 @@
 
   async function loadAll() {
     const j = await api('bootstrap');
-    S.user = j.user; S.stages = j.stages; S.documents = j.documents; S.clusters = j.clusters; S.members = j.members; S.settings = j.settings; S.places = j.places || []; S.memberAccounts = j.memberAccounts || []; S.pendingRequests = j.pendingRequests || 0;
+    S.user = j.user; S.stages = j.stages; S.documents = j.documents; S.clusters = j.clusters; S.members = j.members; S.settings = j.settings; S.places = j.places || []; S.memberAccounts = j.memberAccounts || []; S.pendingRequests = j.pendingRequests || 0; S.trainings = j.trainings || [];
     if (!isDir()) F.cluster = '';
     showMain();
   }
@@ -302,6 +302,7 @@
       (m.hasCert ? '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px"><span class="pill gold">✓ ' + esc(m.certName || 'Certificate') + '</span>' +
         '<button type="button" class="btn-sm" id="cView">View</button><button type="button" class="btn-sm btn-danger" id="cDel">Remove</button></div><div class="small muted" style="margin-bottom:6px">Upload a new file to replace it:</div>' : '') +
       '<input type="file" id="fCert" accept="application/pdf,image/jpeg,image/png"></div></div>' +
+      (m.id ? '<div class="field"><label>Personal trainings</label><div id="mTr" class="cert-box"><span class="muted small">Loading…</span></div></div>' : '') +
       accountBox(m) +
       (m.updatedAt ? '<p class="small muted">Last updated ' + esc(m.updatedAt) + ' by ' + esc(m.updatedBy) + '</p>' : '');
     const foot = (isNew ? '' : '<button class="btn-danger left" id="mDel">Delete</button>') + '<button id="mCancel">Cancel</button><button class="btn-primary" id="mSave">' + (isNew ? 'Add Master Guide' : 'Save changes') + '</button>';
@@ -316,6 +317,7 @@
     };
     $('#mCancel').onclick = () => d.close();
     bindAccountBox(m);
+    if (m.id) loadMemberTrainings(m);
     if ($('#cView')) $('#cView').onclick = () => viewCert(m);
     if ($('#cDel')) $('#cDel').onclick = e => {
       if (!confirm('Remove the certificate file of ' + m.fullName + '?')) return;
@@ -375,6 +377,54 @@
     };
   }
 
+  /* ---------------- personal trainings (inside a record) ---------------- */
+  const trName = t => t.customName || ((S.trainings.find(x => x.id === t.trainingId) || {}).name) || 'Training';
+  const TRS = { verified: ['done', 'Verified'], pending: ['gold', 'Waiting'], rejected: ['off', 'Not accepted'] };
+  async function loadMemberTrainings(m) {
+    try { const j = await api('listMemberTrainings', { memberId: m.id }); drawMemberTrainings(m, j.items); }
+    catch (e) { const el = $('#mTr'); if (el) el.innerHTML = '<span class="err">' + esc(e.message) + '</span>'; }
+  }
+  function drawMemberTrainings(m, items) {
+    const el = $('#mTr'); if (!el) return;
+    el.innerHTML = (items.length ? '<table class="tr-table"><tbody>' + items.map(t => '<tr><td><b>' + esc(trName(t)) + '</b><div class="small muted">' + esc([t.date, t.place].filter(Boolean).join(' · ') || 'no date') + (t.addedBy ? ' · added by ' + esc(t.addedBy) : '') + '</div></td>' +
+      '<td><span class="pill ' + TRS[t.status][0] + '">' + TRS[t.status][1] + '</span></td><td class="tr-act">' +
+      (t.hasCert ? '<button type="button" class="btn-sm" data-tcert="' + esc(t.id) + '">File</button>' : '') +
+      (t.status === 'pending' ? '<button type="button" class="btn-sm btn-primary" data-tok="' + esc(t.id) + '">Verify</button>' : '') +
+      '<button type="button" class="btn-sm btn-danger" data-tdel="' + esc(t.id) + '" title="Delete">✕</button></td></tr>').join('') + '</tbody></table>' : '<p class="small muted" style="margin:0 0 8px">No trainings recorded yet.</p>') +
+      '<details class="tr-add"><summary>+ Add a training (counts as verified)</summary><div class="grid2" style="margin-top:8px"><select id="trId"><option value="">Choose training…</option>' +
+      S.trainings.map(t => '<option value="' + esc(t.id) + '">' + esc(t.name) + '</option>').join('') + '<option value="__other">Other…</option></select><input id="trOther" placeholder="Name (if Other)"></div>' +
+      '<div class="grid2" style="margin-top:8px"><input id="trDate" type="date"><input id="trPlace" placeholder="Venue / organizer"></div>' +
+      '<div class="grid2" style="margin-top:8px;align-items:center"><input type="file" id="trFile" accept="application/pdf,image/jpeg,image/png"><button type="button" class="btn-primary btn-sm" id="trSave">Add training</button></div></details>';
+    el.onclick = e => {
+      const c = e.target.closest('[data-tcert]'), ok = e.target.closest('[data-tok]'), del = e.target.closest('[data-tdel]');
+      if (c) openFile(api('getTrainingCert', { id: c.dataset.tcert }));
+      if (ok) busy(ok, async () => { const j = await api('verifyTraining', { id: ok.dataset.tok, approve: true }); drawMemberTrainings(m, j.items); refreshBadge(); toast('Training verified.', 'ok'); });
+      if (del && confirm('Delete this training entry?')) busy(del, async () => { const j = await api('deleteMemberTraining', { id: del.dataset.tdel }); drawMemberTrainings(m, j.items); refreshBadge(); });
+    };
+    $('#trSave').onclick = e => {
+      const id = $('#trId').value, file = $('#trFile').files[0];
+      if (!id) return toast('Choose a training.', 'err');
+      if (file && file.size > 5 * 1024 * 1024) return toast('File is larger than 5 MB.', 'err');
+      busy(e.target, async () => {
+        const f = file ? { name: file.name, mime: file.type, data: await fileToBase64(file) } : null;
+        const j = await api('saveMemberTraining', { entry: { memberId: m.id, trainingId: id === '__other' ? '' : id, customName: id === '__other' ? $('#trOther').value : '', date: $('#trDate').value, place: $('#trPlace').value }, file: f });
+        drawMemberTrainings(m, j.items); toast('Training added.', 'ok');
+      });
+    };
+  }
+  async function openFile(promise) {
+    const w = window.open('', '_blank');
+    if (w) w.document.write('<p style="font-family:sans-serif;padding:20px">Loading…</p>');
+    try {
+      const j = await promise;
+      const bin = atob(j.data), bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const url = URL.createObjectURL(new Blob([bytes], { type: j.mime }));
+      if (w) w.location.href = url; else { const a = document.createElement('a'); a.href = url; a.download = j.name || 'file'; a.click(); }
+    } catch (e) { if (w) w.close(); handleErr(e); }
+  }
+  async function refreshBadge() { try { const j = await api('listRequests'); setBadge(j.pending.length + (j.trainings || []).length); } catch (e) {} }
+
   /* ---------------- Requests (sign-ups & corrections) ---------------- */
   const normName = s => String(s || '').toLowerCase().replace(/[^a-z0-9ñ ]+/g, ' ').split(/\s+/).filter(w => w.length > 1);
   function nameScore(a, b) { const A = normName(a), B = normName(b); if (!A.length || !B.length) return 0; let hit = 0; A.forEach(w => { if (B.indexOf(w) >= 0) hit++; }); return hit / Math.max(A.length, B.length); }
@@ -387,7 +437,8 @@
     const b = $('.tabs button[data-tab=requests]'); if (b) b.innerHTML = 'Requests' + (n ? ' <span class="badge">' + n + '</span>' : '');
   }
   function drawRequests(j) {
-    setBadge(j.pending.length);
+    j.trainings = j.trainings || [];
+    setBadge(j.pending.length + j.trainings.length);
     const card = r => {
       const p = r.payload;
       if (r.type === 'signup') {
@@ -414,9 +465,21 @@
       '<div class="toolbar" style="margin:0"><button class="btn-danger rNo">Reject</button><span class="spacer"></span><button class="btn-primary rYes">Approve</button></div></div>';
     const past = j.decided.map(r => '<tr><td class="small">' + esc(r.decidedAt) + '</td><td>' + esc(r.type === 'signup' ? 'Sign-up' : 'Correction: ' + (r.payload.label || '')) + '</td><td>' + esc(r.payload.fullName || r.username) + '</td>' +
       '<td><span class="pill ' + (r.status === 'approved' ? 'done' : 'off') + '">' + esc(r.status) + '</span></td><td class="small">' + esc(r.decidedBy) + '</td><td class="small">' + esc(r.reply) + '</td></tr>').join('');
-    $('#rq').innerHTML = (j.pending.length ? '<div class="req-grid">' + j.pending.map(card).join('') + '</div>' : '<div class="empty">No requests waiting. 🎉</div>') +
+    const tcard = t => '<div class="req card-box" data-tid="' + esc(t.id) + '"><div class="req-head"><span class="pill done">Training to verify</span><span class="small muted">' + esc(t.addedAt) + '</span></div>' +
+      '<h3>' + esc(t.fullName) + '</h3><dl class="info"><dt>Training</dt><dd>' + esc(trName(t)) + '</dd><dt>Completed</dt><dd>' + esc(fmtDate(t.date) || '—') + '</dd>' +
+      '<dt>Venue</dt><dd>' + esc(t.place || '—') + '</dd>' + (t.notes ? '<dt>Notes</dt><dd>' + esc(t.notes) + '</dd>' : '') + '</dl>' +
+      (t.hasCert ? '<p><button class="btn-sm tView">View certificate</button></p>' : '<p class="small muted">No certificate attached.</p>') + reqFoot().replace('rYes', 'tYes').replace('rNo', 'tNo');
+    const all = j.pending.map(card).concat(j.trainings.map(tcard));
+    $('#rq').innerHTML = (all.length ? '<div class="req-grid">' + all.join('') + '</div>' : '<div class="empty">No requests waiting. 🎉</div>') +
       (past ? '<h3 style="margin:22px 0 8px">Recently decided</h3><div class="table-wrap"><table><thead><tr><th>Date</th><th>Type</th><th>Name</th><th>Result</th><th>By</th><th>Reply</th></tr></thead><tbody>' + past + '</tbody></table></div>' : '');
     $('#rq').onclick = e => {
+      const tv = e.target.closest('.tView'), ty = e.target.closest('.tYes'), tn = e.target.closest('.tNo');
+      if (tv) return openFile(api('getTrainingCert', { id: tv.closest('.req').dataset.tid }));
+      if (ty || tn) {
+        const box = e.target.closest('.req');
+        if (tn && !confirm('Mark this training as not accepted?')) return;
+        return busy(e.target, async () => { await api('verifyTraining', { id: box.dataset.tid, approve: !!ty, reply: $('.rReply', box).value }); drawRequests(await api('listRequests')); toast(ty ? 'Training verified.' : 'Marked as not accepted.', 'ok'); });
+      }
       const yes = e.target.closest('.rYes'), no = e.target.closest('.rNo'); if (!yes && !no) return;
       const box = e.target.closest('.req'), id = box.dataset.id, link = $('.rLink', box);
       if (no && !confirm('Reject this request?')) return;
@@ -587,10 +650,15 @@
 
   function viewStages(v) {
     v.innerHTML = '<div class="two-col"><div class="card-box"><h2>Progress stages</h2><p class="muted small">In order, from first to last. The <b>last stage means Invested</b> (100%, shown in green). The progress bar fills by stage.</p><div id="stBox"></div></div>' +
-      '<div class="card-box"><h2>Required documents</h2><p class="muted small">These appear as checkboxes on every Master Guide. The public page shows only the count (e.g. "Documents 4/6").</p><div id="docBox"></div></div></div>';
+      '<div class="card-box"><h2>Required documents</h2><p class="muted small">These appear as checkboxes on every Master Guide. The public page shows only the count (e.g. "Documents 4/6").</p><div id="docBox"></div></div></div>' +
+      '<div class="card-box" style="max-width:760px"><h2>Trainings list</h2><p class="muted small">Master Guides choose from this list when they add a personal training (they can also type another). Started with the GC Club Ministries Training (CMT) certifications and the older PLA / APLA-PIA awards.</p><div id="trBox"></div></div>';
     listEditor($('#stBox'), S.stages.map(s => ({ key: s.id, name: s.name })), {
       placeholder: 'Stage name',
       onSave: async list => { const j = await api('saveStages', { items: list.map(x => ({ id: x.key, name: x.name })) }); S.stages = j.items; toast('Stages saved.', 'ok'); viewStages(v); }
+    });
+    listEditor($('#trBox'), S.trainings.map(s => ({ key: s.id, name: s.name })), {
+      placeholder: 'Training name',
+      onSave: async list => { const j = await api('saveTrainings', { items: list.map(x => ({ id: x.key, name: x.name })) }); S.trainings = j.items; toast('Trainings list saved.', 'ok'); viewStages(v); }
     });
     listEditor($('#docBox'), S.documents.map(s => ({ key: s.id, name: s.name })), {
       placeholder: 'Document name',

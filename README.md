@@ -82,6 +82,9 @@ In the admin site open **Map Pins**, choose a church from the list, then search 
 ## Master Guide profile accounts (My Profile)
 Master Guides open `profile.html` (link "Master Guide: My Profile" at the bottom of the public page) and tap **Create my profile account**. The request appears in the admin **Requests** tab for their cluster. The coordinator links it to the right record (or creates one) and approves. After that, the Master Guide can sign in to see their stage, documents and certificate, update their own mobile/email, and send correction requests. Coordinators can disable an account or reset its password from the Master Guide's record.
 
+## Personal trainings
+Each Master Guide can add the trainings they have completed (CMT certifications, PLA, APLA/PIA, others) in **My Profile**, with date, venue and an optional certificate. Their coordinator verifies them in the admin **Requests** tab, or adds them directly inside the Master Guide's record. The Director edits the list of trainings in **Stages & Documents → Trainings list**. Trainings are private (not on the public page).
+
 ## Who can do what
 
 | | Director | Cluster Coordinator | Public |
