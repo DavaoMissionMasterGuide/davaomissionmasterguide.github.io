@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>My Profile · Master Guide Registry</title>
+<link rel="icon" href="logo.png">
+<link rel="stylesheet" href="style.css?v=7">
+<script src="config.js?v=7"></script>
+</head>
+<body class="admin profile">
+<div id="app"><div class="login-wrap"><div class="login-card">Loading…</div></div></div>
+<div id="toast"></div>
+
+<script>
+(function () {
+  const C = window.MG_CONFIG || {};
+  const $ = (s, el) => (el || document).querySelector(s);
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const S = { token: null, cfg: {}, pub: null, prof: null };
+  const store = {
+    get: k => { try { return sessionStorage.getItem(k); } catch (e) { return null; } },
+    set: (k, v) => { try { v == null ? sessionStorage.removeItem(k) : sessionStorage.setItem(k, v); } catch (e) {} }
+  };
+  const LOGO = esc((C.LOGO || 'logo.png') + '?v=' + (C.VERSION || 1));
+
+  async function api(action, data) {
+    if (!C.API_URL) throw new Error('The website is not connected yet.');
+    let res;
+    try { res = await fetch(C.API_URL, { method: 'POST', body: JSON.stringify(Object.assign({ action: action, token: S.token }, data || {})) }); }
+    catch (e) { throw new Error('Cannot reach the server. Check your internet connection.'); }
+    const j = await res.json().catch(() => { throw new Error('Unexpected server response.'); });
+    if (!j.ok) { const err = new Error(j.error || 'Request failed'); err.code = j.error; throw err; }
+    return j;
+  }
+  async function getJson(action) {
+    const r = await fetch(C.API_URL + (C.API_URL.indexOf('?') < 0 ? '?' : '&') + 'action=' + action);
+    return r.json();
+  }
+  function handleErr(e) {
+    if (e && e.code === 'SESSION_EXPIRED') { toast('Your session expired. Please sign in again.', 'err'); signOut(true); return; }
+    if (e && e.code === 'MUST_CHANGE_PASSWORD') { showChangePassword(); return; }
+    toast((e && e.message) || String(e), 'err');
+  }
+  async function busy(btn, fn) {
+    const label = btn ? btn.innerHTML : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Please wait…'; }
+    try { return await fn(); } catch (e) { handleErr(e); } finally { if (btn && btn.isConnected) { btn.disabled = false; btn.innerHTML = label; } }
+  }
+  function toast(msg, kind) {
+    const d = document.createElement('div'); d.className = kind || ''; d.textContent = msg;
+    $('#toast').appendChild(d); setTimeout(() => d.remove(), kind === 'err' ? 6000 : 3000);
+  }
+  function fmtDate(d) {
+    if (!d) return '';
+    const p = String(d).split('-').map(Number);
+    if (p.length !== 3 || !p[0]) return d;
+    return new Date(p[0], p[1] - 1, p[2]).toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' });
+  }
+
+  /* ---------------- start ---------------- */
+  async function start() {
+    if (!C.API_URL) { $('#app').innerHTML = card('<h1>Not connected yet</h1><p class="muted">The registry is not connected to its data yet.</p>'); return; }
+    try { const j = await getJson('config'); if (j.ok) S.cfg = j; } catch (e) {}
+    S.token = store.get('mg_token');
+    if (S.token) {
+      try { await loadProfile(); return; }
+      catch (e) {
+        if (e.code === 'MUST_CHANGE_PASSWORD') return showChangePassword();
+        if (/not available/.test(e.message)) { location.href = 'admin.html'; return; }
+        S.token = null; store.set('mg_token', null);
+      }
+    }
+    showLogin();
+  }
+  const card = (inner, id) => '<div class="login-wrap"><' + (id ? 'form id="' + id + '"' : 'div') + ' class="login-card">' +
+    '<img class="login-logo" src="' + LOGO + '" alt="" onerror="this.remove()">' + inner + '</' + (id ? 'form' : 'div') + '></div>';
+
+  function showLogin(msg) {
+    $('#app').innerHTML = card(
+      '<div class="eyebrow">Master Guide</div><h1>My Profile</h1><p class="muted small" style="margin-top:4px">Sign in to see your progress, documents and certificate.</p>' +
+      (msg ? '<div class="notice" style="margin-top:10px">' + msg + '</div>' : '') +
+      '<div class="field"><label for="lu">Username</label><input id="lu" autocomplete="username" required autocapitalize="none"></div>' +
+      '<div class="field"><label for="lp">Password</label><input id="lp" type="password" autocomplete="current-password" required></div>' +
+      '<button class="btn-primary" style="width:100%;justify-content:center" id="lbtn">Sign in</button>' +
+      (S.cfg.googleClientId ? '<div class="or">or</div><div id="gbtn"></div>' : '') +
+      '<div class="or">New here?</div><button type="button" id="goSignup" style="width:100%;justify-content:center">Create my profile account</button>' +
+      '<p class="small" style="text-align:center;margin:18px 0 0"><a href="index.html">← Public registry</a> · <a href="admin.html">Coordinator sign in</a></p>', 'loginForm');
+    $('#loginForm').onsubmit = e => {
+      e.preventDefault();
+      busy($('#lbtn'), async () => afterLogin(await api('login', { username: $('#lu').value, password: $('#lp').value })));
+    };
+    $('#goSignup').onclick = showSignup;
+    if (S.cfg.googleClientId) initGoogle();
+  }
+
+  function initGoogle() {
+    const render = () => {
+      google.accounts.id.initialize({ client_id: S.cfg.googleClientId, callback: resp => busy(null, async () => afterLogin(await api('loginGoogle', { credential: resp.credential }))) });
+      const el = $('#gbtn'); if (el) google.accounts.id.renderButton(el, { theme: 'outline', size: 'large', width: 300 });
+    };
+    if (window.google && google.accounts) return render();
+    const s = document.createElement('script'); s.src = 'https://accounts.google.com/gsi/client'; s.async = true; s.onload = render; document.head.appendChild(s);
+  }
+
+  function afterLogin(j) {
+    S.token = j.token; store.set('mg_token', j.token);
+    if (j.user.role !== 'member') { location.href = 'admin.html'; return; }
+    if (j.user.mustChange) return showChangePassword();
+    loadProfile().catch(handleErr);
+  }
+  function signOut(silent) {
+    if (!silent && S.token) api('logout').catch(() => {});
+    S.token = null; store.set('mg_token', null); S.prof = null;
+    showLogin();
+  }
+
+  /* ---------------- sign up ---------------- */
+  async function showSignup() {
+    const clusters = S.cfg.clusters || [];
+    $('#app').innerHTML = card(
+      '<div class="eyebrow">Master Guide</div><h1>Create my profile account</h1>' +
+      '<p class="muted small" style="margin-top:4px">Your Cluster Coordinator will check your details and approve your account.</p>' +
+      '<div class="field"><label>Full name *</label><input id="sName" placeholder="e.g. Juan A. Dela Cruz" required></div>' +
+      '<div class="field"><label>Cluster *</label><select id="sCl" required><option value="">Choose your cluster…</option>' + clusters.map(c => '<option>' + esc(c) + '</option>').join('') + '</select></div>' +
+      '<div class="grid2"><div class="field"><label>District *</label><input id="sDi" list="dlDi" required></div><div class="field"><label>Church *</label><input id="sCh" list="dlCh" required></div></div>' +
+      '<datalist id="dlDi"></datalist><datalist id="dlCh"></datalist>' +
+      '<div class="grid2"><div class="field"><label>Mobile <span class="muted">(optional)</span></label><input id="sPh" inputmode="tel"></div><div class="field"><label>Email <span class="muted">(optional)</span></label><input id="sEm" type="email"></div></div>' +
+      '<div class="field"><label>Note for your coordinator <span class="muted">(optional)</span></label><input id="sNote" placeholder="e.g. Invested 2019 at the Mission camporee"></div>' +
+      '<hr style="border:0;border-top:1px solid var(--line);margin:14px 0">' +
+      '<div class="field"><label>Choose a username *</label><input id="sUser" autocapitalize="none" autocomplete="username" placeholder="letters and numbers, no spaces" required></div>' +
+      '<div class="grid2"><div class="field"><label>Password * <span class="muted">(8+ characters)</span></label><input id="sPw" type="password" autocomplete="new-password" required></div><div class="field"><label>Repeat password *</label><input id="sPw2" type="password" autocomplete="new-password" required></div></div>' +
+      '<button class="btn-primary" style="width:100%;justify-content:center" id="sBtn">Send for approval</button>' +
+      '<p class="small" style="text-align:center;margin:14px 0 0"><button type="button" class="btn-link" id="sBack">← Back to sign in</button></p>', 'signupForm');
+    $('.login-card').style.width = 'min(520px,100%)';
+    $('#sBack').onclick = () => showLogin();
+    // suggestions from the public registry, so spellings match
+    try {
+      if (!S.pub) S.pub = await getJson('public');
+      const fill = () => {
+        const cl = $('#sCl').value, ms = (S.pub.members || []).concat((S.pub.places || []).map(p => ({ cl: p.cl, di: p.di, ch: p.ch }))).filter(m => !cl || m.cl === cl);
+        const u = a => Array.from(new Set(a.filter(Boolean))).sort();
+        $('#dlDi').innerHTML = u(ms.map(m => m.di)).map(v => '<option value="' + esc(v) + '">').join('');
+        $('#dlCh').innerHTML = u(ms.filter(m => !$('#sDi').value || m.di === $('#sDi').value).map(m => m.ch)).map(v => '<option value="' + esc(v) + '">').join('');
+      };
+      $('#sCl').onchange = fill; $('#sDi').onchange = fill; fill();
+    } catch (e) {}
+    $('#signupForm').onsubmit = e => {
+      e.preventDefault();
+      if ($('#sPw').value !== $('#sPw2').value) return toast('The passwords do not match.', 'err');
+      busy($('#sBtn'), async () => {
+        await api('signup', { signup: { fullName: $('#sName').value, cluster: $('#sCl').value, district: $('#sDi').value, church: $('#sCh').value, phone: $('#sPh').value, email: $('#sEm').value, note: $('#sNote').value, username: $('#sUser').value, password: $('#sPw').value } });
+        showLogin('<b>Request sent!</b> Your Cluster Coordinator will review it. You can sign in once it is approved.');
+      });
+    };
+  }
+
+  /* ---------------- forced password change ---------------- */
+  function showChangePassword() {
+    $('#app').innerHTML = card('<div class="eyebrow">Security</div><h1>Set a new password</h1><p class="muted small">Your coordinator reset your password. Please choose your own.</p>' +
+      '<div class="field"><label>New password <span class="muted">(8+ characters)</span></label><input id="pNew" type="password" autocomplete="new-password"></div>' +
+      '<div class="field"><label>Repeat new password</label><input id="pNew2" type="password" autocomplete="new-password"></div>' +
+      '<button class="btn-primary" style="width:100%;justify-content:center" id="pbtn">Save password</button>', 'pwForm');
+    $('#pwForm').onsubmit = e => {
+      e.preventDefault();
+      if ($('#pNew').value !== $('#pNew2').value) return toast('The passwords do not match.', 'err');
+      busy($('#pbtn'), async () => { await api('changePassword', { newPassword: $('#pNew').value }); toast('Password changed.', 'ok'); await loadProfile(); });
+    };
+  }
+
+  /* ---------------- profile ---------------- */
+  async function loadProfile() {
+    S.prof = await api('myProfile');
+    renderProfile();
+  }
+
+  function renderProfile() {
+    const P = S.prof, m = P.member, u = P.user;
+    const top = '<header class="topbar"><div class="wrap"><div class="brand"><img src="' + LOGO + '" alt="" class="brand-logo" onerror="this.remove()">' + esc(S.cfg.siteTitle || 'Master Guide Registry') + '<small>MY PROFILE</small></div>' +
+      '<div class="me"><span><b>' + esc(u.name) + '</b> · ' + esc(u.username) + '</span><a class="btn btn-sm" style="background:transparent;color:#fff;border-color:rgba(255,255,255,.35)" href="index.html">Public registry</a><button class="btn-sm" id="out">Sign out</button></div></div></header>';
+    if (!m) {
+      $('#app').innerHTML = top + '<main class="wrap view"><div class="card-box"><h2>Your record is not linked yet</h2><p class="muted">Please contact your Cluster Coordinator (' + esc(u.cluster) + ').</p></div></main>';
+      $('#out').onclick = () => signOut();
+      return;
+    }
+    const N = P.stages.length, si = P.stages.findIndex(s => s.id === m.stageId), pct = N && si >= 0 ? Math.round((si + 1) / N * 100) : 0, invested = N > 0 && si === N - 1;
+    const steps = P.stages.map((s, i) => {
+      const cls = (i < si || (invested && i === si)) ? 'done' : (i === si ? 'current' : '');
+      return '<li class="' + cls + (i === N - 1 ? ' final' : '') + '"><span class="dot">' + (cls === 'done' ? '✓' : i + 1) + '</span>' + esc(s.name) + '</li>';
+    }).join('');
+    const got = P.documents.filter(d => m.docs.indexOf(d.id) >= 0).length;
+    const docs = P.documents.map(d => { const ok = m.docs.indexOf(d.id) >= 0; return '<li class="' + (ok ? 'ok' : 'no') + '"><span>' + (ok ? '✓' : '○') + '</span>' + esc(d.name) + '<em>' + (ok ? 'Submitted' : 'Not yet') + '</em></li>'; }).join('');
+    const reqs = P.requests.map(r => '<tr><td class="small">' + esc(r.createdAt) + '</td><td>' + esc(r.payload.label) + '</td><td>' + esc(r.payload.value || r.payload.note) + '</td>' +
+      '<td><span class="pill ' + (r.status === 'approved' ? 'done' : r.status === 'rejected' ? 'off' : 'gold') + '">' + esc(r.status === 'pending' ? 'Waiting' : r.status[0].toUpperCase() + r.status.slice(1)) + '</span></td><td class="small">' + esc(r.reply) + '</td></tr>').join('');
+
+    $('#app').innerHTML = top + '<main class="wrap view prof">' +
+      '<section class="prof-hero card-box"><div><span class="k-label">Master Guide</span><h1>' + esc(m.fullName) + '</h1>' +
+      '<p class="muted">' + esc([m.church, m.district, m.cluster].filter(Boolean).join(' · ')) + '</p></div>' +
+      '<div class="prof-status"><span class="pill ' + (invested ? 'done' : '') + '">' + esc(si >= 0 ? P.stages[si].name : '—') + '</span><b>' + pct + '%</b></div>' +
+      '<div class="progress ' + (invested ? 'done' : '') + '" style="grid-column:1/-1"><span style="width:' + pct + '%"></span></div></section>' +
+
+      '<div class="two-col">' +
+      '<section class="card-box"><h2>My progress</h2><ol class="steps">' + steps + '</ol>' +
+      '<dl class="info"><dt>Date of training</dt><dd>' + esc(fmtDate(m.trainingDate) || '—') + '</dd><dt>Date invested</dt><dd>' + esc(fmtDate(m.investedDate) || '—') + '</dd></dl></section>' +
+      '<section class="card-box"><h2>My documents <span class="muted small">' + got + ' of ' + P.documents.length + ' submitted</span></h2><ul class="doclist">' + (docs || '<li class="muted">No documents required.</li>') + '</ul>' +
+      '<h2 style="margin-top:18px">Certificate</h2>' + (m.hasCert ? '<p class="muted small">Your certificate is on file.</p><button class="btn-primary" id="cert">Download my certificate</button>' : '<p class="muted small">No certificate uploaded yet. Your coordinator uploads it after investiture.</p>') + '</section>' +
+      '</div>' +
+
+      '<div class="two-col">' +
+      '<form class="card-box" id="contact"><h2>My contact info</h2><p class="muted small">Only you and your coordinators can see this. It is never shown publicly.</p>' +
+      '<div class="field"><label>Mobile number</label><input id="cPh" inputmode="tel" value="' + esc(m.phone) + '"></div>' +
+      '<div class="field"><label>Email</label><input id="cEm" type="email" value="' + esc(m.email) + '"></div>' +
+      '<button class="btn-primary" id="cSave">Save contact info</button></form>' +
+      '<form class="card-box" id="reqForm"><h2>Request a correction</h2><p class="muted small">Is something wrong? Your Cluster Coordinator will review and update it.</p>' +
+      '<div class="field"><label>What needs correcting?</label><select id="rField"><option value="fullName">Full name</option><option value="church">Church</option><option value="district">District</option>' +
+      '<option value="trainingDate">Date of training</option><option value="investedDate">Date invested</option><option value="other">Something else (stage, documents…)</option></select></div>' +
+      '<div class="field" id="rValWrap"><label id="rValLabel">Correct value</label><input id="rVal"></div>' +
+      '<div class="field"><label>Note <span class="muted">(optional)</span></label><input id="rNote" placeholder="e.g. My certificate shows a different date"></div>' +
+      '<button class="btn-primary" id="rSend">Send request</button></form>' +
+      '</div>' +
+
+      (reqs ? '<section class="card-box"><h2>My requests</h2><div class="table-wrap" style="box-shadow:none"><table><thead><tr><th>Sent</th><th>What</th><th>Requested</th><th>Status</th><th>Reply</th></tr></thead><tbody>' + reqs + '</tbody></table></div></section>' : '') +
+
+      '<form class="card-box" id="pw" style="max-width:520px"><h2>Change my password</h2>' +
+      '<div class="field"><label>Current password</label><input id="pOld" type="password" autocomplete="current-password"></div>' +
+      '<div class="grid2"><div class="field"><label>New password</label><input id="pN1" type="password" autocomplete="new-password"></div><div class="field"><label>Repeat</label><input id="pN2" type="password" autocomplete="new-password"></div></div>' +
+      '<button id="pBtn">Change password</button></form>' +
+      '</main>';
+
+    $('#out').onclick = () => signOut();
+    if ($('#cert')) $('#cert').onclick = e => busy(e.target, async () => {
+      const j = await api('myCert');
+      const bin = atob(j.data), bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const url = URL.createObjectURL(new Blob([bytes], { type: j.mime }));
+      const a = document.createElement('a'); a.href = url; a.download = j.name || 'certificate'; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    });
+    $('#contact').onsubmit = e => { e.preventDefault(); busy($('#cSave'), async () => { const j = await api('updateContact', { phone: $('#cPh').value, email: $('#cEm').value }); S.prof.member = j.member; toast('Contact info saved.', 'ok'); }); };
+    const fieldUi = () => {
+      const f = $('#rField').value, isDate = /Date$/.test(f);
+      $('#rVal').type = isDate ? 'date' : 'text';
+      $('#rValLabel').textContent = f === 'other' ? 'What should change?' : 'Correct value';
+      $('#rVal').value = f !== 'other' && m[f] ? m[f] : '';
+    };
+    $('#rField').onchange = fieldUi; fieldUi();
+    $('#reqForm').onsubmit = e => {
+      e.preventDefault();
+      busy($('#rSend'), async () => { S.prof = await api('requestChange', { field: $('#rField').value, value: $('#rVal').value, note: $('#rNote').value }); renderProfile(); toast('Request sent to your coordinator.', 'ok'); });
+    };
+    $('#pw').onsubmit = e => {
+      e.preventDefault();
+      if ($('#pN1').value.length < 8) return toast('New password must be at least 8 characters.', 'err');
+      if ($('#pN1').value !== $('#pN2').value) return toast('The new passwords do not match.', 'err');
+      busy($('#pBtn'), async () => { await api('changePassword', { oldPassword: $('#pOld').value, newPassword: $('#pN1').value }); toast('Password changed.', 'ok'); ['#pOld', '#pN1', '#pN2'].forEach(i => $(i).value = ''); });
+    };
+  }
+
+  start();
+})();
+</script>
+</body>
+</html>

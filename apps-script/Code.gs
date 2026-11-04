@@ -18,17 +18,22 @@ const DEFAULT_PASSWORD = 'ChangeMe123';
 const PUBLIC_CACHE_SECONDS = 600;             // public page data is cached 10 minutes (cleared on every change)
 
 const SHEETS = {
-  Members:   ['id', 'fullName', 'cluster', 'district', 'church', 'trainingDate', 'investedDate', 'stageId', 'docs', 'certFileId', 'certName', 'updatedAt', 'updatedBy'],
+  Members:   ['id', 'fullName', 'cluster', 'district', 'church', 'trainingDate', 'investedDate', 'stageId', 'docs', 'certFileId', 'certName', 'updatedAt', 'updatedBy', 'phone', 'email'],
   Stages:    ['id', 'name', 'order'],
   Documents: ['id', 'name', 'order'],
   Clusters:  ['name'],
-  Users:     ['id', 'username', 'email', 'name', 'role', 'cluster', 'salt', 'hash', 'active', 'mustChange', 'createdAt', 'lastLogin'],
+  Users:     ['id', 'username', 'email', 'name', 'role', 'cluster', 'salt', 'hash', 'active', 'mustChange', 'createdAt', 'lastLogin', 'memberId'],
   Settings:  ['key', 'value'],
   Log:       ['time', 'user', 'action', 'detail'],
-  Places:    ['type', 'cluster', 'district', 'church', 'lat', 'lng', 'address', 'updatedAt', 'updatedBy']
+  Places:    ['type', 'cluster', 'district', 'church', 'lat', 'lng', 'address', 'updatedAt', 'updatedBy'],
+  Requests:  ['id', 'type', 'userId', 'username', 'memberId', 'cluster', 'payload', 'status', 'createdAt', 'decidedBy', 'decidedAt', 'reply']
 };
 
-const READ_ONLY = ['me', 'bootstrap', 'getCert', 'listUsers', 'getLog'];
+// Actions a Master Guide (role "member") may use. Everything else is for coordinators and the Director.
+const MEMBER_ACTIONS = ['me', 'logout', 'changePassword', 'myProfile', 'updateContact', 'requestChange', 'myCert'];
+const CHANGE_FIELDS = { fullName: 'Full name', district: 'District', church: 'Church', trainingDate: 'Date of training', investedDate: 'Date invested', other: 'Other' };
+
+const READ_ONLY = ['me', 'bootstrap', 'getCert', 'listUsers', 'getLog', 'myProfile', 'myCert', 'listRequests'];
 
 const ACTIONS = {
   me: (u) => ({ user: pubUser_(u) }),
@@ -50,7 +55,14 @@ const ACTIONS = {
   saveSettings: saveSettings_,
   getLog: getLog_,
   savePlace: savePlace_,
-  deletePlace: deletePlace_
+  deletePlace: deletePlace_,
+  myProfile: myProfile_,
+  updateContact: updateContact_,
+  requestChange: requestChange_,
+  myCert: myCert_,
+  listRequests: listRequests_,
+  decideRequest: decideRequest_,
+  setMemberAccount: setMemberAccount_
 };
 
 /* ============================== SETUP ============================== */
@@ -111,7 +123,7 @@ function doGet(e) {
     }
     if (action === 'config') {
       const st = getSettings_();
-      return json_({ ok: true, siteTitle: st.siteTitle || '', subtitle: st.subtitle || '', googleClientId: st.googleClientId || '' });
+      return json_({ ok: true, siteTitle: st.siteTitle || '', subtitle: st.subtitle || '', googleClientId: st.googleClientId || '', clusters: readAll_('Clusters').map(c => c.name) });
     }
     return json_({ ok: false, error: 'Unknown action' });
   } catch (err) {
@@ -126,8 +138,13 @@ function doPost(e) {
     const a = req.action;
     if (a === 'login') return json_(login_(req));
     if (a === 'loginGoogle') return json_(loginGoogle_(req));
+    if (a === 'signup') { const o = signup_(req); cacheClear_(); return json_(o); }
     const user = auth_(req.token);
     if (!user) return json_({ ok: false, error: 'SESSION_EXPIRED' });
+    const isMemberAction = MEMBER_ACTIONS.indexOf(a) >= 0;
+    if (user.role === 'member' ? !isMemberAction : (isMemberAction && ['me', 'logout', 'changePassword'].indexOf(a) < 0)) {
+      return json_({ ok: false, error: 'This action is not available for your account.' });
+    }
     if (user.mustChange === 'true' && ['changePassword', 'me', 'logout'].indexOf(a) < 0) {
       return json_({ ok: false, error: 'MUST_CHANGE_PASSWORD' });
     }
@@ -207,11 +224,13 @@ function login_(r) {
   const fails = Number(c.get(fk) || 0);
   if (fails >= 5) throw new Error('Too many failed attempts. Please wait 10 minutes and try again.');
   const u = readAll_('Users').find(x => x.username.toLowerCase() === username);
-  if (!u || u.active !== 'true' || !u.hash || hash_(pw, u.salt) !== u.hash) {
+  if (!u || !u.hash || hash_(pw, u.salt) !== u.hash) {
     c.put(fk, String(fails + 1), 600);
     throw new Error('Wrong username or password.');
   }
   c.remove(fk);
+  if (u.active === 'pending') throw new Error('Your account is waiting for approval by your Cluster Coordinator.');
+  if (u.active !== 'true') throw new Error('This account is disabled. Please contact your Cluster Coordinator.');
   return startSession_(u);
 }
 
@@ -226,7 +245,8 @@ function loginGoogle_(r) {
   }
   const email = String(info.email || '').toLowerCase();
   const u = readAll_('Users').find(x => x.email && x.email.toLowerCase() === email);
-  if (!u || u.active !== 'true') throw new Error(email + ' is not registered. Ask the Master Guide Director to add this Gmail to your account.');
+  if (u && u.active === 'pending') throw new Error('Your account is waiting for approval by your Cluster Coordinator.');
+  if (!u || u.active !== 'true') throw new Error(email + ' is not registered or the account is disabled.');
   return startSession_(u);
 }
 
@@ -249,7 +269,7 @@ function changePassword_(u, r) {
 }
 
 function pubUser_(u) {
-  return { id: u.id, username: u.username, email: u.email, name: u.name, role: u.role, cluster: u.cluster, mustChange: u.mustChange === 'true' };
+  return { id: u.id, username: u.username, email: u.email, name: u.name, role: u.role, cluster: u.cluster, mustChange: u.mustChange === 'true', memberId: u.memberId || '' };
 }
 function isDir_(u) { return u.role === 'director'; }
 function requireDir_(u) { if (!isDir_(u)) throw new Error('Only the Master Guide Director can do this.'); }
@@ -262,7 +282,8 @@ function memberOut_(m) {
     id: m.id, fullName: m.fullName, cluster: m.cluster, district: m.district, church: m.church,
     trainingDate: m.trainingDate, investedDate: m.investedDate, stageId: m.stageId,
     docs: m.docs ? String(m.docs).split(',').filter(Boolean) : [],
-    certName: m.certName, hasCert: !!m.certFileId, updatedAt: m.updatedAt, updatedBy: m.updatedBy
+    certName: m.certName, hasCert: !!m.certFileId, updatedAt: m.updatedAt, updatedBy: m.updatedBy,
+    phone: m.phone || '', email: m.email || ''
   };
 }
 
@@ -276,6 +297,9 @@ function bootstrap_(u) {
     clusters: readAll_('Clusters').map(c => c.name),
     members: members,
     places: placesFor_(u),
+    memberAccounts: readAll_('Users').filter(x => x.role === 'member' && x.memberId && (isDir_(u) || x.cluster === u.cluster))
+      .map(x => ({ userId: x.id, username: x.username, memberId: x.memberId, active: x.active, lastLogin: x.lastLogin, email: x.email })),
+    pendingRequests: readAll_('Requests').filter(x => x.status === 'pending' && (isDir_(u) || x.cluster === u.cluster)).length,
     settings: isDir_(u)
       ? { siteTitle: s.siteTitle || '', subtitle: s.subtitle || '', showDocCount: s.showDocCount !== 'false', googleClientId: s.googleClientId || '' }
       : { siteTitle: s.siteTitle || '' }
@@ -312,7 +336,9 @@ function saveMember_(u, r) {
       district: clean_(m.district, 80), church: clean_(m.church, 120), trainingDate: td, investedDate: inv,
       stageId: stageId, docs: docs.join(','),
       certFileId: existing ? existing.certFileId : '', certName: existing ? existing.certName : '',
-      updatedAt: nowStr_(), updatedBy: u.username
+      updatedAt: nowStr_(), updatedBy: u.username,
+      phone: m.phone !== undefined ? clean_(m.phone, 40) : (existing ? existing.phone : ''),
+      email: m.email !== undefined ? clean_(m.email, 120) : (existing ? existing.email : '')
     };
     if (existing) updateRow_('Members', existing._row, rec); else appendRows_('Members', [rec]);
     log_(u, existing ? 'Edit Master Guide' : 'Add Master Guide', fullName + ' (' + cluster + ')');
@@ -327,6 +353,7 @@ function deleteMember_(u, r) {
     if (!canEdit_(u, m)) throw new Error('You can only manage Master Guides in ' + u.cluster + '.');
     if (m.certFileId) { try { DriveApp.getFileById(m.certFileId).setTrashed(true); } catch (_) {} }
     sheet_('Members').deleteRow(m._row);
+    readAll_('Users').filter(x => x.role === 'member' && x.memberId === m.id).forEach(x => { x.memberId = ''; x.active = 'false'; updateRow_('Users', x._row, x); });
     log_(u, 'Delete Master Guide', m.fullName + ' (' + m.cluster + ')');
     return {};
   });
@@ -494,6 +521,7 @@ function saveClusters_(u, r) {
       renameColumn_('Members', 'cluster', renames);
       renameColumn_('Users', 'cluster', renames);
       renameColumn_('Places', 'cluster', renames);
+      renameColumn_('Requests', 'cluster', renames);
     }
     writeAll_('Clusters', items.map(x => ({ name: x.name })));
     log_(u, 'Update clusters', items.map(x => x.name).join(', '));
@@ -516,7 +544,7 @@ function renameColumn_(sheetName, col, map) {
 function listUsers_(u) {
   requireDir_(u);
   return {
-    users: readAll_('Users').map(x => Object.assign(pubUser_(x), { active: x.active === 'true', lastLogin: x.lastLogin, hasPassword: !!x.hash }))
+    users: readAll_('Users').filter(x => x.role !== 'member').map(x => Object.assign(pubUser_(x), { active: x.active === 'true', lastLogin: x.lastLogin, hasPassword: !!x.hash }))
   };
 }
 
@@ -538,6 +566,7 @@ function saveUser_(u, r) {
     const all = readAll_('Users');
     const existing = d.id ? all.find(x => x.id === d.id) : null;
     if (d.id && !existing) throw new Error('Account not found.');
+    if (existing && existing.role === 'member') throw new Error('Master Guide profile accounts are managed from the Master Guide record.');
     const myId = existing ? existing.id : '';
     if (all.some(x => x.id !== myId && x.username.toLowerCase() === username)) throw new Error('Username "' + username + '" is already taken.');
     if (email && all.some(x => x.id !== myId && x.email && x.email.toLowerCase() === email)) throw new Error(email + ' is already used by another account.');
@@ -551,7 +580,7 @@ function saveUser_(u, r) {
       id: existing ? existing.id : newId_('U'), username: username, email: email, name: clean_(d.name, 80) || username,
       role: role, cluster: cluster, salt: existing ? existing.salt : '', hash: existing ? existing.hash : '',
       active: String(active), mustChange: existing ? existing.mustChange : 'false',
-      createdAt: existing ? existing.createdAt : nowStr_(), lastLogin: existing ? existing.lastLogin : ''
+      createdAt: existing ? existing.createdAt : nowStr_(), lastLogin: existing ? existing.lastLogin : '', memberId: ''
     };
     if (pw) {
       rec.salt = Utilities.getUuid();
@@ -621,6 +650,200 @@ function deletePlace_(u, r) {
   });
 }
 
+/* ============================== MASTER GUIDE PROFILES ============================== */
+
+function signup_(r) {
+  const c = CacheService.getScriptCache();
+  const burst = Number(c.get('signup_burst') || 0);
+  if (burst >= 40) throw new Error('Too many sign-ups right now. Please try again in an hour.');
+  const d = r.signup || {};
+  const fullName = clean_(d.fullName, 120);
+  if (!fullName) throw new Error('Please enter your full name.');
+  const cluster = readAll_('Clusters').map(x => x.name).find(n => n === clean_(d.cluster, 80));
+  if (!cluster) throw new Error('Please choose your cluster.');
+  const district = clean_(d.district, 80), church = clean_(d.church, 120);
+  if (!district || !church) throw new Error('Please enter your district and church.');
+  const username = clean_(d.username, 40).toLowerCase();
+  if (!/^[a-z0-9._-]{3,40}$/.test(username)) throw new Error('Username must be 3–40 characters: letters, numbers, dot, dash or underscore (no spaces).');
+  const pw = String(d.password || '');
+  if (pw.length < 8) throw new Error('Password must be at least 8 characters.');
+  const email = clean_(d.email, 120).toLowerCase();
+  if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new Error('Please enter a valid email (or leave it blank).');
+  return withLock_(() => {
+    const users = readAll_('Users');
+    if (users.some(x => x.username.toLowerCase() === username)) throw new Error('That username is already taken. Please choose another.');
+    if (email && users.some(x => x.email && x.email.toLowerCase() === email)) throw new Error('That email already has an account. Try signing in instead.');
+    const salt = Utilities.getUuid();
+    const user = {
+      id: newId_('U'), username: username, email: email, name: fullName, role: 'member', cluster: cluster,
+      salt: salt, hash: hash_(pw, salt), active: 'pending', mustChange: 'false', createdAt: nowStr_(), lastLogin: '', memberId: ''
+    };
+    appendRows_('Users', [user]);
+    appendRows_('Requests', [{
+      id: newId_('R'), type: 'signup', userId: user.id, username: username, memberId: '', cluster: cluster,
+      payload: JSON.stringify({ fullName: fullName, district: district, church: church, email: email, phone: clean_(d.phone, 40), note: clean_(d.note, 300) }),
+      status: 'pending', createdAt: nowStr_(), decidedBy: '', decidedAt: '', reply: ''
+    }]);
+    c.put('signup_burst', String(burst + 1), 3600);
+    log_({ username: username }, 'Sign-up request', fullName + ' (' + cluster + ')');
+    return { ok: true };
+  });
+}
+
+function myMember_(u) {
+  if (!u.memberId) return null;
+  return readAll_('Members').find(m => m.id === u.memberId) || null;
+}
+
+function requestOut_(x) {
+  let p = {};
+  try { p = JSON.parse(x.payload || '{}'); } catch (_) {}
+  return { id: x.id, type: x.type, userId: x.userId, username: x.username, memberId: x.memberId, cluster: x.cluster, payload: p,
+    status: x.status, createdAt: x.createdAt, decidedBy: x.decidedBy, decidedAt: x.decidedAt, reply: x.reply };
+}
+
+function myProfile_(u) {
+  const m = myMember_(u);
+  return {
+    user: pubUser_(u),
+    member: m ? memberOut_(m) : null,
+    stages: sortedList_('Stages'),
+    documents: sortedList_('Documents'),
+    requests: readAll_('Requests').filter(x => x.userId === u.id && x.type === 'change').map(requestOut_).reverse().slice(0, 30)
+  };
+}
+
+function updateContact_(u, r) {
+  const phone = clean_(r.phone, 40), email = clean_(r.email, 120);
+  if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new Error('Please enter a valid email (or leave it blank).');
+  return withLock_(() => {
+    const m = myMember_(u);
+    if (!m) throw new Error('Your account is not linked to a Master Guide record yet.');
+    m.phone = phone; m.email = email; m.updatedAt = nowStr_(); m.updatedBy = u.username;
+    updateRow_('Members', m._row, m);
+    log_(u, 'Update own contact info', m.fullName);
+    return { member: memberOut_(m) };
+  });
+}
+
+function requestChange_(u, r) {
+  const field = String(r.field || '');
+  if (!CHANGE_FIELDS[field]) throw new Error('Please choose what to correct.');
+  let value = clean_(r.value, field === 'other' ? 300 : 120);
+  if (field === 'trainingDate' || field === 'investedDate') value = date_(value, CHANGE_FIELDS[field]);
+  const note = clean_(r.note, 300);
+  if (!value && !note) throw new Error('Please type the correct value or a note.');
+  return withLock_(() => {
+    const m = myMember_(u);
+    if (!m) throw new Error('Your account is not linked to a Master Guide record yet.');
+    const all = readAll_('Requests');
+    if (all.filter(x => x.userId === u.id && x.status === 'pending').length >= 5) throw new Error('You already have 5 requests waiting. Please wait for your coordinator to review them.');
+    appendRows_('Requests', [{
+      id: newId_('R'), type: 'change', userId: u.id, username: u.username, memberId: m.id, cluster: m.cluster,
+      payload: JSON.stringify({ field: field, label: CHANGE_FIELDS[field], value: value, current: field === 'other' ? '' : (m[field] || ''), note: note, fullName: m.fullName }),
+      status: 'pending', createdAt: nowStr_(), decidedBy: '', decidedAt: '', reply: ''
+    }]);
+    log_(u, 'Correction request', m.fullName + ': ' + CHANGE_FIELDS[field]);
+    return myProfile_(u);
+  });
+}
+
+function myCert_(u) {
+  const m = myMember_(u);
+  if (!m || !m.certFileId) throw new Error('No certificate uploaded yet.');
+  const blob = DriveApp.getFileById(m.certFileId).getBlob();
+  return { name: m.certName, mime: blob.getContentType(), data: Utilities.base64Encode(blob.getBytes()) };
+}
+
+function listRequests_(u) {
+  const all = readAll_('Requests').filter(x => isDir_(u) || x.cluster === u.cluster).map(requestOut_);
+  const pending = all.filter(x => x.status === 'pending');
+  const decided = all.filter(x => x.status !== 'pending').reverse().slice(0, 50);
+  return { pending: pending, decided: decided };
+}
+
+function decideRequest_(u, r) {
+  const approve = r.decision === 'approve';
+  if (!approve && r.decision !== 'reject') throw new Error('Choose approve or reject.');
+  const reply = clean_(r.reply, 300);
+  return withLock_(() => {
+    const q = readAll_('Requests').find(x => x.id === r.id);
+    if (!q) throw new Error('Request not found.');
+    if (q.status !== 'pending') throw new Error('This request was already ' + q.status + '.');
+    if (!isDir_(u) && q.cluster !== u.cluster) throw new Error('You can only review requests in ' + u.cluster + '.');
+    const p = requestOut_(q).payload;
+    const users = readAll_('Users');
+    const acct = users.find(x => x.id === q.userId);
+    let detail = '';
+
+    if (q.type === 'signup') {
+      if (!acct) throw new Error('The sign-up account no longer exists.');
+      if (approve) {
+        let memberId = String(r.memberId || '');
+        const members = readAll_('Members');
+        if (memberId) {
+          const m = members.find(x => x.id === memberId);
+          if (!m) throw new Error('That Master Guide record was not found.');
+          if (m.cluster !== q.cluster) throw new Error('That record is in another cluster.');
+          if (users.some(x => x.id !== acct.id && x.role === 'member' && x.memberId === memberId && x.active === 'true')) throw new Error('That record is already linked to another account.');
+          if (!m.phone && p.phone) m.phone = p.phone;
+          if (!m.email && p.email) m.email = p.email;
+          updateRow_('Members', m._row, m);
+        } else {
+          const stages = sortedList_('Stages');
+          const rec = {
+            id: newId_('MG'), fullName: p.fullName, cluster: q.cluster, district: p.district || '', church: p.church || '',
+            trainingDate: '', investedDate: '', stageId: stages[0] ? stages[0].id : '', docs: '', certFileId: '', certName: '',
+            updatedAt: nowStr_(), updatedBy: u.username, phone: p.phone || '', email: p.email || ''
+          };
+          appendRows_('Members', [rec]);
+          memberId = rec.id;
+        }
+        acct.memberId = memberId;
+        acct.active = 'true';
+        updateRow_('Users', acct._row, acct);
+        q.memberId = memberId;
+        detail = 'linked to record';
+      } else {
+        sheet_('Users').deleteRow(acct._row);   // frees the username
+        detail = 'sign-up rejected';
+      }
+    } else {
+      if (approve && p.field !== 'other') {
+        const m = readAll_('Members').find(x => x.id === q.memberId);
+        if (!m) throw new Error('That Master Guide record no longer exists.');
+        if (p.field === 'trainingDate' || p.field === 'investedDate') m[p.field] = date_(p.value, p.label);
+        else if (p.value) m[p.field] = clean_(p.value, 120);
+        m.updatedAt = nowStr_(); m.updatedBy = u.username;
+        updateRow_('Members', m._row, m);
+      }
+      detail = (p.label || p.field) + ': ' + (p.value || '');
+    }
+    q.status = approve ? 'approved' : 'rejected';
+    q.decidedBy = u.username; q.decidedAt = nowStr_(); q.reply = reply;
+    const fresh = readAll_('Requests').find(x => x.id === q.id);   // row may have moved after a user delete (different sheet, same row)
+    updateRow_('Requests', fresh._row, q);
+    log_(u, (approve ? 'Approve ' : 'Reject ') + q.type + ' request', (p.fullName || q.username) + ' — ' + detail);
+    return listRequests_(u);
+  });
+}
+
+function setMemberAccount_(u, r) {
+  return withLock_(() => {
+    const acct = readAll_('Users').find(x => x.id === r.userId && x.role === 'member');
+    if (!acct) throw new Error('Account not found.');
+    if (!isDir_(u) && acct.cluster !== u.cluster) throw new Error('You can only manage accounts in ' + u.cluster + '.');
+    if (r.active !== undefined) acct.active = r.active ? 'true' : 'false';
+    if (r.password) {
+      if (String(r.password).length < 8) throw new Error('Password must be at least 8 characters.');
+      acct.salt = Utilities.getUuid(); acct.hash = hash_(String(r.password), acct.salt); acct.mustChange = 'true';
+    }
+    updateRow_('Users', acct._row, acct);
+    log_(u, 'Update profile account', acct.username + (r.password ? ' (password reset)' : '') + (r.active !== undefined ? (r.active ? ' (enabled)' : ' (disabled)') : ''));
+    return { account: { userId: acct.id, username: acct.username, memberId: acct.memberId, active: acct.active, lastLogin: acct.lastLogin, email: acct.email } };
+  });
+}
+
 /* ============================== SETTINGS & LOG ============================== */
 
 function saveSettings_(u, r) {
@@ -675,8 +898,16 @@ function sheet_(n) {
     s.setFrozenRows(1);
   }
   if (!s) throw new Error('Missing sheet "' + n + '". Please run setup() first.');
+  if (!HEADER_OK_[n] && SHEETS[n]) {   // add new columns to the header after an update
+    const w = SHEETS[n].length;
+    if (s.getMaxColumns() < w) s.insertColumnsAfter(s.getMaxColumns(), w - s.getMaxColumns());
+    const h = s.getRange(1, 1, 1, w).getValues()[0];
+    if (h.some((v, i) => String(v) !== SHEETS[n][i])) s.getRange(1, 1, 1, w).setValues([SHEETS[n]]).setFontWeight('bold');
+    HEADER_OK_[n] = true;
+  }
   return s;
 }
+const HEADER_OK_ = {};
 
 function cell_(v) {
   if (v instanceof Date) return Utilities.formatDate(v, tz_(), 'yyyy-MM-dd');
@@ -748,7 +979,11 @@ function clean_(v, max) { return String(v === null || v === undefined ? '' : v).
 function date_(v, label) {
   const s = String(v || '').trim();
   if (!s) return '';
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(s) || isNaN(new Date(s + 'T00:00:00').getTime())) throw new Error(label + ' is not a valid date ("' + s + '").');
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const d = m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : null;
+  if (!d || d.getFullYear() !== Number(m[1]) || d.getMonth() !== Number(m[2]) - 1 || d.getDate() !== Number(m[3])) {
+    throw new Error(label + ' is not a valid date ("' + s + '").');
+  }
   return s;
 }
 

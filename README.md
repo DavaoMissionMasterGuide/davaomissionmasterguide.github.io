@@ -79,6 +79,9 @@ Everyone can already sign in with username + password. To also allow the Google 
 ## Map pins (dashboard map)
 In the admin site open **Map Pins**, choose a church from the list, then search its address or click the map, and press **Save pin**. Districts and clusters without their own pin are shown in the middle of their churches. The public map lets visitors click Cluster → District → Church.
 
+## Master Guide profile accounts (My Profile)
+Master Guides open `profile.html` (link "Master Guide: My Profile" at the bottom of the public page) and tap **Create my profile account**. The request appears in the admin **Requests** tab for their cluster. The coordinator links it to the right record (or creates one) and approves. After that, the Master Guide can sign in to see their stage, documents and certificate, update their own mobile/email, and send correction requests. Coordinators can disable an account or reset its password from the Master Guide's record.
+
 ## Who can do what
 
 | | Director | Cluster Coordinator | Public |

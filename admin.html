@@ -7,8 +7,8 @@
 <title>Admin · Master Guide Registry</title>
 <link rel="icon" href="logo.png">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-<link rel="stylesheet" href="style.css?v=6">
-<script src="config.js?v=6"></script>
+<link rel="stylesheet" href="style.css?v=7">
+<script src="config.js?v=7"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 </head>
 <body class="admin">
@@ -93,6 +93,7 @@
       try { await loadAll(); return; }
       catch (e) {
         if (e.code === 'MUST_CHANGE_PASSWORD') { S.user = S.user || {}; showChangePassword(true); return; }
+        if (/not available/.test(e.message)) { location.href = 'profile.html'; return; }
         S.token = null; store.set('mg_token', null);
       }
     }
@@ -101,13 +102,14 @@
 
   async function loadAll() {
     const j = await api('bootstrap');
-    S.user = j.user; S.stages = j.stages; S.documents = j.documents; S.clusters = j.clusters; S.members = j.members; S.settings = j.settings; S.places = j.places || [];
+    S.user = j.user; S.stages = j.stages; S.documents = j.documents; S.clusters = j.clusters; S.members = j.members; S.settings = j.settings; S.places = j.places || []; S.memberAccounts = j.memberAccounts || []; S.pendingRequests = j.pendingRequests || 0;
     if (!isDir()) F.cluster = '';
     showMain();
   }
 
   function afterLogin(j) {
     S.token = j.token; store.set('mg_token', j.token); S.user = j.user;
+    if (j.user.role === 'member') { location.href = 'profile.html'; return; }
     if (j.user.mustChange) showChangePassword(true);
     else loadAll().catch(handleErr);
   }
@@ -122,7 +124,7 @@
       '<div class="field"><label for="lp">Password</label><input id="lp" type="password" autocomplete="current-password" required></div>' +
       '<button class="btn-primary" style="width:100%;justify-content:center" id="lbtn">Sign in</button>' +
       (S.cfg.googleClientId ? '<div class="or">or</div><div id="gbtn"></div>' : '') +
-      '<p class="small" style="text-align:center;margin:18px 0 0"><a href="index.html">← Public page</a></p></form></div>';
+      '<p class="small" style="text-align:center;margin:18px 0 0"><a href="index.html">← Public page</a> · <a href="profile.html">Master Guide? Go to My Profile</a></p></form></div>';
     $('#loginForm').onsubmit = e => {
       e.preventDefault();
       busy($('#lbtn'), async () => afterLogin(await api('login', { username: $('#lu').value, password: $('#lp').value })));
@@ -181,7 +183,7 @@
 
   /* ---------------- main layout ---------------- */
   function showMain() {
-    const tabs = [['members', 'Master Guides'], ['import', 'Import'], ['map', 'Map Pins']];
+    const tabs = [['members', 'Master Guides'], ['requests', 'Requests' + (S.pendingRequests ? ' <span class="badge">' + S.pendingRequests + '</span>' : '')], ['import', 'Import'], ['map', 'Map Pins']];
     if (isDir()) tabs.push(['stages', 'Stages & Documents'], ['clusters', 'Clusters'], ['accounts', 'Accounts'], ['settings', 'Settings'], ['log', 'Activity Log']);
     tabs.push(['password', 'My Password']);
     if (!tabs.some(t => t[0] === S.tab)) S.tab = 'members';
@@ -203,7 +205,7 @@
 
   function renderTab() {
     const v = $('#view');
-    ({ members: viewMembers, import: viewImport, map: viewMap, stages: viewStages, clusters: viewClusters, accounts: viewAccounts, settings: viewSettings, log: viewLog, password: viewPassword })[S.tab](v);
+    ({ members: viewMembers, requests: viewRequests, import: viewImport, map: viewMap, stages: viewStages, clusters: viewClusters, accounts: viewAccounts, settings: viewSettings, log: viewLog, password: viewPassword })[S.tab](v);
   }
 
   /* ---------------- Master Guides ---------------- */
@@ -289,6 +291,8 @@
       datalist('dlDi', S.members.map(x => x.district).concat(S.places.map(x => x.district))) + datalist('dlCh', S.members.map(x => x.church).concat(S.places.map(x => x.church))) +
       '<div class="grid2"><div class="field"><label>Date of training</label><input id="fTd" type="date" value="' + esc(m.trainingDate) + '"></div>' +
       '<div class="field"><label>Date invested</label><input id="fInv" type="date" value="' + esc(m.investedDate) + '"></div></div>' +
+      '<div class="grid2"><div class="field"><label>Mobile <span class="muted">(private)</span></label><input id="fPh" inputmode="tel" value="' + esc(m.phone || '') + '"></div>' +
+      '<div class="field"><label>Email <span class="muted">(private)</span></label><input id="fEm" type="email" value="' + esc(m.email || '') + '"></div></div>' +
       '<div class="field"><label>Progress stage</label><select id="fSt">' + S.stages.map((s, i) => '<option value="' + esc(s.id) + '"' + (s.id === m.stageId ? ' selected' : '') + '>' + (i + 1) + '. ' + esc(s.name) + '</option>').join('') + '</select>' +
       '<div class="progress" style="margin-top:8px" id="fBar"><span></span></div></div>' +
       '<div class="field"><label>Document tracker</label><div class="checks">' +
@@ -298,6 +302,7 @@
       (m.hasCert ? '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px"><span class="pill gold">✓ ' + esc(m.certName || 'Certificate') + '</span>' +
         '<button type="button" class="btn-sm" id="cView">View</button><button type="button" class="btn-sm btn-danger" id="cDel">Remove</button></div><div class="small muted" style="margin-bottom:6px">Upload a new file to replace it:</div>' : '') +
       '<input type="file" id="fCert" accept="application/pdf,image/jpeg,image/png"></div></div>' +
+      accountBox(m) +
       (m.updatedAt ? '<p class="small muted">Last updated ' + esc(m.updatedAt) + ' by ' + esc(m.updatedBy) + '</p>' : '');
     const foot = (isNew ? '' : '<button class="btn-danger left" id="mDel">Delete</button>') + '<button id="mCancel">Cancel</button><button class="btn-primary" id="mSave">' + (isNew ? 'Add Master Guide' : 'Save changes') + '</button>';
     const d = openModal(isNew ? 'Add Master Guide' : 'Edit Master Guide', body, foot, true);
@@ -310,6 +315,7 @@
       if ($('#fInv').value && last && $('#fSt').value !== last.id && confirm('Set the stage to "' + last.name + '" as well?')) { $('#fSt').value = last.id; bar(); }
     };
     $('#mCancel').onclick = () => d.close();
+    bindAccountBox(m);
     if ($('#cView')) $('#cView').onclick = () => viewCert(m);
     if ($('#cDel')) $('#cDel').onclick = e => {
       if (!confirm('Remove the certificate file of ' + m.fullName + '?')) return;
@@ -325,7 +331,7 @@
       if (!$('#fName').value.trim()) return toast('Please enter the full name.', 'err');
       const payload = {
         id: m.id || '', fullName: $('#fName').value, cluster: $('#fCl').value, district: $('#fDi').value, church: $('#fCh').value,
-        trainingDate: $('#fTd').value, investedDate: $('#fInv').value, stageId: $('#fSt').value,
+        trainingDate: $('#fTd').value, investedDate: $('#fInv').value, stageId: $('#fSt').value, phone: $('#fPh').value, email: $('#fEm').value,
         docs: $$('.checks input:checked', d).map(x => x.value)
       };
       busy(e.target, async () => {
@@ -346,6 +352,80 @@
       });
     };
     $('#fName').focus();
+  }
+
+  /* profile account (Master Guide's own sign-in) shown inside the record */
+  function accountBox(m) {
+    if (!m.id) return '';
+    const a = S.memberAccounts.find(x => x.memberId === m.id);
+    if (!a) return '<div class="field"><label>Profile account</label><div class="cert-box small muted">No profile account yet. ' + esc(m.fullName.split(' ')[0]) + ' can create one at <b>My Profile → Create my profile account</b>; you will see it in <b>Requests</b>.</div></div>';
+    const on = a.active === 'true';
+    return '<div class="field"><label>Profile account</label><div class="cert-box acct"><span><b>' + esc(a.username) + '</b> · ' + (on ? '<span class="pill done">Active</span>' : '<span class="pill off">Disabled</span>') +
+      ' <span class="small muted">last sign-in: ' + esc(a.lastLogin || 'never') + '</span></span><span class="acct-btns"><button type="button" class="btn-sm" id="aReset">Reset password</button>' +
+      '<button type="button" class="btn-sm ' + (on ? 'btn-danger' : '') + '" id="aToggle">' + (on ? 'Disable' : 'Enable') + '</button></span></div></div>';
+  }
+  function bindAccountBox(m) {
+    const a = S.memberAccounts.find(x => x.memberId === m.id); if (!a) return;
+    const done = j => { const i = S.memberAccounts.findIndex(x => x.userId === a.userId); S.memberAccounts[i] = j.account; openMember(S.members.find(x => x.id === m.id)); };
+    $('#aToggle').onclick = e => busy(e.target, async () => { done(await api('setMemberAccount', { userId: a.userId, active: a.active !== 'true' })); toast('Account updated.', 'ok'); });
+    $('#aReset').onclick = e => {
+      const pw = prompt('New temporary password for ' + a.username + ' (at least 8 characters). They will choose their own at next sign-in.');
+      if (!pw) return;
+      busy(e.target, async () => { done(await api('setMemberAccount', { userId: a.userId, password: pw })); toast('Password reset. Tell ' + a.username + ' the temporary password.', 'ok'); });
+    };
+  }
+
+  /* ---------------- Requests (sign-ups & corrections) ---------------- */
+  const normName = s => String(s || '').toLowerCase().replace(/[^a-z0-9ñ ]+/g, ' ').split(/\s+/).filter(w => w.length > 1);
+  function nameScore(a, b) { const A = normName(a), B = normName(b); if (!A.length || !B.length) return 0; let hit = 0; A.forEach(w => { if (B.indexOf(w) >= 0) hit++; }); return hit / Math.max(A.length, B.length); }
+  async function viewRequests(v) {
+    v.innerHTML = '<div class="sec-head"><h2>Requests</h2><span class="muted small">Sign-ups and corrections from Master Guides' + (isDir() ? '' : ' in ' + esc(S.user.cluster)) + '.</span></div><div id="rq">Loading…</div>';
+    try { const j = await api('listRequests'); drawRequests(j); } catch (e) { handleErr(e); }
+  }
+  function setBadge(n) {
+    S.pendingRequests = n;
+    const b = $('.tabs button[data-tab=requests]'); if (b) b.innerHTML = 'Requests' + (n ? ' <span class="badge">' + n + '</span>' : '');
+  }
+  function drawRequests(j) {
+    setBadge(j.pending.length);
+    const card = r => {
+      const p = r.payload;
+      if (r.type === 'signup') {
+        const linked = S.memberAccounts.filter(a => a.active === 'true').map(a => a.memberId);
+        const cands = S.members.filter(m => m.cluster === r.cluster && linked.indexOf(m.id) < 0)
+          .map(m => ({ m: m, sc: nameScore(p.fullName, m.fullName) + (m.church && m.church === p.church ? .2 : 0) })).filter(x => x.sc > 0)
+          .sort((a, b) => b.sc - a.sc).slice(0, 15);
+        return '<div class="req card-box" data-id="' + esc(r.id) + '"><div class="req-head"><span class="pill gold">New sign-up</span><span class="small muted">' + esc(r.createdAt) + '</span></div>' +
+          '<h3>' + esc(p.fullName) + '</h3><p class="muted small">' + esc([p.church, p.district, r.cluster].filter(Boolean).join(' · ')) + '</p>' +
+          '<dl class="info"><dt>Username</dt><dd>' + esc(r.username) + '</dd>' + (p.phone ? '<dt>Mobile</dt><dd>' + esc(p.phone) + '</dd>' : '') + (p.email ? '<dt>Email</dt><dd>' + esc(p.email) + '</dd>' : '') + (p.note ? '<dt>Note</dt><dd>' + esc(p.note) + '</dd>' : '') + '</dl>' +
+          '<div class="field"><label>Link to their Master Guide record</label><select class="rLink">' +
+          (cands.length ? '<optgroup label="Possible matches">' + cands.map((x, i) => '<option value="' + esc(x.m.id) + '"' + (i === 0 ? ' selected' : '') + '>' + esc(x.m.fullName + ' — ' + [x.m.church, x.m.district].filter(Boolean).join(', ')) + '</option>').join('') + '</optgroup>' : '') +
+          '<option value=""' + (cands.length ? '' : ' selected') + '>➕ Create a new record for this person</option>' +
+          '<optgroup label="All in ' + esc(r.cluster) + '">' + S.members.filter(m => m.cluster === r.cluster && linked.indexOf(m.id) < 0).sort((a, b) => a.fullName.localeCompare(b.fullName)).slice(0, 500).map(m => '<option value="' + esc(m.id) + '">' + esc(m.fullName) + '</option>').join('') + '</optgroup></select></div>' +
+          reqFoot();
+      }
+      return '<div class="req card-box" data-id="' + esc(r.id) + '"><div class="req-head"><span class="pill">Correction</span><span class="small muted">' + esc(r.createdAt) + '</span></div>' +
+        '<h3>' + esc(p.fullName) + ' <span class="muted small">(' + esc(r.username) + ')</span></h3>' +
+        '<dl class="info"><dt>Field</dt><dd>' + esc(p.label) + '</dd>' + (p.field !== 'other' ? '<dt>Now</dt><dd>' + esc(p.current || '—') + '</dd><dt>Change to</dt><dd class="hl">' + esc(p.value || '—') + '</dd>' : '<dt>Request</dt><dd>' + esc(p.value) + '</dd>') +
+        (p.note ? '<dt>Note</dt><dd>' + esc(p.note) + '</dd>' : '') + '</dl>' +
+        (p.field === 'other' ? '<p class="small muted">Approving only marks it done. Make the change yourself in the record (stage, documents…).</p>' : '<p class="small muted">Approving updates the record automatically.</p>') + reqFoot();
+    };
+    const reqFoot = () => '<div class="field"><label>Reply <span class="muted">(optional, they will see it)</span></label><input class="rReply" placeholder="e.g. Updated, thank you!"></div>' +
+      '<div class="toolbar" style="margin:0"><button class="btn-danger rNo">Reject</button><span class="spacer"></span><button class="btn-primary rYes">Approve</button></div></div>';
+    const past = j.decided.map(r => '<tr><td class="small">' + esc(r.decidedAt) + '</td><td>' + esc(r.type === 'signup' ? 'Sign-up' : 'Correction: ' + (r.payload.label || '')) + '</td><td>' + esc(r.payload.fullName || r.username) + '</td>' +
+      '<td><span class="pill ' + (r.status === 'approved' ? 'done' : 'off') + '">' + esc(r.status) + '</span></td><td class="small">' + esc(r.decidedBy) + '</td><td class="small">' + esc(r.reply) + '</td></tr>').join('');
+    $('#rq').innerHTML = (j.pending.length ? '<div class="req-grid">' + j.pending.map(card).join('') + '</div>' : '<div class="empty">No requests waiting. 🎉</div>') +
+      (past ? '<h3 style="margin:22px 0 8px">Recently decided</h3><div class="table-wrap"><table><thead><tr><th>Date</th><th>Type</th><th>Name</th><th>Result</th><th>By</th><th>Reply</th></tr></thead><tbody>' + past + '</tbody></table></div>' : '');
+    $('#rq').onclick = e => {
+      const yes = e.target.closest('.rYes'), no = e.target.closest('.rNo'); if (!yes && !no) return;
+      const box = e.target.closest('.req'), id = box.dataset.id, link = $('.rLink', box);
+      if (no && !confirm('Reject this request?')) return;
+      busy(e.target, async () => {
+        const res = await api('decideRequest', { id: id, decision: yes ? 'approve' : 'reject', reply: $('.rReply', box).value, memberId: link ? link.value : '' });
+        const b = await api('bootstrap'); S.members = b.members; S.memberAccounts = b.memberAccounts || [];
+        drawRequests(res); toast(yes ? 'Approved.' : 'Rejected.', 'ok');
+      });
+    };
   }
 
   function upsert(m) {
