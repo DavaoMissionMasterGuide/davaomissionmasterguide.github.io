@@ -125,7 +125,7 @@
       '<div class="field"><label for="lp">Password</label><input id="lp" type="password" autocomplete="current-password" required></div>' +
       '<button class="btn-primary" style="width:100%;justify-content:center" id="lbtn">Sign in</button>' +
       (S.cfg.googleClientId ? '<div class="or">or</div><div id="gbtn"></div>' : '') +
-      '<p class="small" style="text-align:center;margin:18px 0 0"><a href="index.html">← Public page</a> · <a href="profile.html">Master Guide? Go to My Profile</a></p><p class="credit">© 2026 All rights reserved · Made by MG Ernie Jhun Tundaan</p></form></div>';
+      '<p class="small" style="text-align:center;margin:18px 0 0"><a href="index.html">← Public page</a> · <a href="profile.html">Master Guide? Go to My Profile</a></p><p class="credit">© 2026 All rights reserved · Owned by Davao Mission Master Guide Club</p></form></div>';
     $('#loginForm').onsubmit = e => {
       e.preventDefault();
       busy($('#lbtn'), async () => afterLogin(await api('login', { username: $('#lu').value, password: $('#lp').value })));
@@ -193,7 +193,7 @@
       '<header class="topbar"><div class="wrap"><div class="brand"><img src="system-mark.svg" alt="" class="brand-logo">' + esc(S.settings.siteTitle || 'Master Guide Registry') + '<small>ADMIN</small></div>' +
       '<div class="me"><span><b>' + esc(S.user.name) + '</b> · ' + esc(role) + '</span><a class="btn btn-sm" style="background:transparent;color:#fff;border-color:rgba(255,255,255,.35)" href="index.html" target="_blank">Public page ↗</a><button class="btn-sm" id="out">Sign out</button></div></div></header>' +
       '<nav class="tabs"><div class="wrap">' + tabs.map(t => '<button data-tab="' + t[0] + '" class="' + (t[0] === S.tab ? 'on' : '') + '">' + t[1] + '</button>').join('') + '</div></nav>' +
-      '<main class="wrap view" id="view"></main><footer class="credit" style="padding:0 0 24px">© 2026 All rights reserved · Made by MG Ernie Jhun Tundaan</footer>';
+      '<main class="wrap view" id="view"></main><footer class="credit" style="padding:0 0 24px">© 2026 All rights reserved · Owned by Davao Mission Master Guide Club</footer>';
     $('#out').onclick = () => signOut();
     $('.tabs').onclick = e => {
       const b = e.target.closest('button[data-tab]'); if (!b) return;

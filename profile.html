@@ -87,7 +87,7 @@
       '<button class="btn-primary" style="width:100%;justify-content:center" id="lbtn">Sign in</button>' +
       (S.cfg.googleClientId ? '<div class="or">or</div><div id="gbtn"></div>' : '') +
       '<div class="or">New here?</div><button type="button" id="goSignup" style="width:100%;justify-content:center">Create my profile account</button>' +
-      '<p class="small" style="text-align:center;margin:18px 0 0"><a href="index.html">← Public registry</a> · <a href="admin.html">Coordinator sign in</a></p><p class="credit">© 2026 All rights reserved · Made by MG Ernie Jhun Tundaan</p>', 'loginForm');
+      '<p class="small" style="text-align:center;margin:18px 0 0"><a href="index.html">← Public registry</a> · <a href="admin.html">Coordinator sign in</a></p><p class="credit">© 2026 All rights reserved · Owned by Davao Mission Master Guide Club</p>', 'loginForm');
     $('#loginForm').onsubmit = e => {
       e.preventDefault();
       busy($('#lbtn'), async () => afterLogin(await api('login', { username: $('#lu').value, password: $('#lp').value })));
@@ -228,7 +228,7 @@
       '<div class="field"><label>Current password</label><input id="pOld" type="password" autocomplete="current-password"></div>' +
       '<div class="grid2"><div class="field"><label>New password</label><input id="pN1" type="password" autocomplete="new-password"></div><div class="field"><label>Repeat</label><input id="pN2" type="password" autocomplete="new-password"></div></div>' +
       '<button id="pBtn">Change password</button></form>' +
-      '</main><footer class="credit" style="padding:0 0 24px">© 2026 All rights reserved · Made by MG Ernie Jhun Tundaan</footer>';
+      '</main><footer class="credit" style="padding:0 0 24px">© 2026 All rights reserved · Owned by Davao Mission Master Guide Club</footer>';
 
     $('#out').onclick = () => signOut();
     bindTrainings();
