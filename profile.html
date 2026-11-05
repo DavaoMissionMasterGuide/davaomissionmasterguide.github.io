@@ -5,9 +5,10 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex">
 <title>My Profile · Master Guide Registry</title>
-<link rel="icon" href="logo.png">
-<link rel="stylesheet" href="style.css?v=8">
-<script src="config.js?v=8"></script>
+<link rel="icon" href="favicon.png">
+<link rel="apple-touch-icon" href="system-mark-192.png">
+<link rel="stylesheet" href="style.css?v=9">
+<script src="config.js?v=9"></script>
 </head>
 <body class="admin profile">
 <div id="app"><div class="login-wrap"><div class="login-card">Loading…</div></div></div>
@@ -23,7 +24,7 @@
     get: k => { try { return sessionStorage.getItem(k); } catch (e) { return null; } },
     set: (k, v) => { try { v == null ? sessionStorage.removeItem(k) : sessionStorage.setItem(k, v); } catch (e) {} }
   };
-  const LOGO = esc((C.LOGO || 'logo.png') + '?v=' + (C.VERSION || 1));
+  const LOGO = 'system-mark.svg';
 
   async function api(action, data) {
     if (!C.API_URL) throw new Error('The website is not connected yet.');
