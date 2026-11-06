@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /admin.html
+Disallow: /profile.html
+Disallow: /apps-script/
+
+Sitemap: https://davaomissionmasterguide.github.io/sitemap.xml
