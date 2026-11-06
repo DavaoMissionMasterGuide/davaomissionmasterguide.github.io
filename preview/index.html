@@ -1,0 +1,517 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<base href="/">
+<meta name="robots" content="noindex">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="google-site-verification" content="IA6B87Tx98Y3Z_kCjqL4ItGLkqkv0ZrpoFy3AS0j8bM" />
+<title>PREVIEW · Davao Mission Master Guides</title>
+<meta name="description" content="Official registry of Master Guides in Davao Mission: invested Master Guides, progress, clusters, churches, announcements and upcoming activities. Owned by the Davao Mission Master Guide Club.">
+<link rel="canonical" href="https://davaomissionmasterguide.github.io/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Davao Mission Master Guides">
+<meta property="og:title" content="Davao Mission Master Guides – Registry">
+<meta property="og:description" content="Invested Master Guides, progress, announcements and upcoming activities of Davao Mission.">
+<meta property="og:url" content="https://davaomissionmasterguide.github.io/">
+<meta property="og:image" content="https://davaomissionmasterguide.github.io/brand/social-preview.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="favicon.png">
+<link rel="apple-touch-icon" href="system-mark-192.png">
+<link rel="stylesheet" href="style.css?v=12">
+<script src="config.js?v=9"></script>
+</head>
+<body class="public">
+<!-- ===== 5-second "classified file" intro ===== -->
+<div id="intro" aria-hidden="true">
+  <div class="i-grid"></div>
+  <div class="i-scan"></div>
+  <div class="i-corner tl"></div><div class="i-corner tr"></div><div class="i-corner bl"></div><div class="i-corner br"></div>
+  <div class="i-top"><span>● REC</span><span id="iClock">00:00:00</span><span>DAVAO MISSION · YOUTH MINISTRIES</span></div>
+  <div class="i-center">
+    <div class="i-target">
+      <div class="i-ring r1"></div><div class="i-ring r2"></div><div class="i-cross"></div>
+      <div class="i-logo"><img class="mg-logo" alt=""></div>
+    </div>
+    <div class="i-title">MASTER GUIDE REGISTRY</div>
+    <div class="i-type" id="iType"></div>
+    <div class="i-bar"><span></span></div>
+    <div class="i-granted">ACCESS GRANTED</div>
+  </div>
+  <div class="i-bottom">FILE NO. DM-MG &nbsp;·&nbsp; <span id="iCount">SCANNING…</span></div>
+  <button type="button" id="iSkip">Skip ›</button>
+</div>
+
+<header class="hero">
+  <div class="wrap hero-row">
+    <img class="hero-logo" src="system-mark.svg" alt="Master Guide Registry logo">
+    <div class="hero-text">
+      <div class="eyebrow">Davao Mission</div>
+      <h1 id="title">Master Guide Registry</h1>
+      <p id="subtitle">Master Guide Progress &amp; Investiture Registry</p>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <!-- KPIs -->
+  <section class="kpis" id="kpis">
+    <div class="kpi"><span class="k-label">Loading…</span><b>—</b></div>
+  </section>
+
+  <div class="notice preview-bar"><b>Preview</b> — this is a test version of the home page with the map replaced. The live site is not changed. <a id="pvToggle" href="preview/?demo">Show with sample data</a></div>
+
+  <!-- Newest Master Guides -->
+  <section class="section" id="newest" hidden>
+    <div class="sec-head"><h2>Our newest Master Guides</h2><span class="muted small">Most recently invested</span></div>
+    <div class="nw-list" id="newList"></div>
+  </section>
+
+  <!-- Bulletin board -->
+  <section class="section" id="bulletin" hidden>
+    <div class="sec-head"><h2>Bulletin board</h2><div class="chips" id="bFilter" role="group" aria-label="Show posts for"></div></div>
+    <div class="bulletin">
+      <div class="panel"><h3>Announcements</h3><div class="b-list" id="bAnn"></div></div>
+      <div class="panel"><h3>Upcoming activities</h3><div class="b-list" id="bEv"></div></div>
+    </div>
+  </section>
+
+  <!-- Explore by cluster -->
+  <section class="section" id="explore">
+    <div class="sec-head"><h2>Explore by cluster</h2><span class="muted small">Click a cluster to see its districts and churches.</span></div>
+    <div class="x-cards" id="xCards"></div>
+    <div class="x-panel" id="xPanel" hidden></div>
+  </section>
+
+  <!-- Progress overview -->
+  <section class="section">
+    <div class="sec-head"><h2>Progress overview</h2></div>
+    <div class="overview">
+      <div class="panel">
+        <h3>Progress pipeline <span class="muted small">· click a stage to filter</span></h3>
+        <div class="funnel" id="stageFlow"></div>
+      </div>
+      <div class="panel">
+        <h3>Invested per year</h3>
+        <div class="years" id="years"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Directory -->
+  <section class="section" id="directory">
+    <div class="sec-head"><h2>Master Guide directory</h2><button class="btn-link" id="clear" hidden>Clear filters</button></div>
+    <div class="filters">
+      <input id="q" type="search" placeholder="Search a name or church…" aria-label="Search">
+      <select id="fCluster" aria-label="Cluster"></select>
+      <select id="fDistrict" aria-label="District"></select>
+      <select id="fChurch" aria-label="Church"></select>
+      <select id="fStage" aria-label="Stage"></select>
+      <select id="fSort" aria-label="Sort">
+        <option value="name">Sort: Name A–Z</option>
+        <option value="progress">Sort: Most progress</option>
+        <option value="invested">Sort: Recently invested</option>
+      </select>
+    </div>
+    <div id="demo" class="notice" hidden>Showing <b>sample data</b> only. Put your Web App URL in <code>config.js</code> to show the real registry.</div>
+    <div class="result-meta"><span id="meta"></span></div>
+    <div id="list" class="cards"><div class="empty">Loading the registry…</div></div>
+    <nav id="pager" class="pager"></nav>
+  </section>
+</main>
+
+<footer class="foot"><span id="updated"></span> · <a href="profile.html">Master Guide: My Profile</a> · <a href="admin.html">Coordinator sign in</a><div class="credit">© 2026 All rights reserved · Owned by Davao Mission Master Guide Club</div></footer>
+
+<dialog id="dlg"></dialog>
+
+<script>
+(function () {
+  const C = window.MG_CONFIG || {};
+  const PER = 24;
+  const DEFAULT_VIEW = [7.2, 125.6], DEFAULT_ZOOM = 8;   // Davao Region
+  const $ = s => document.querySelector(s);
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const fmt = n => Number(n).toLocaleString('en-PH');
+  const uniq = arr => Array.from(new Set(arr.filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  let D = null, people = [], filtered = [], page = 1;
+  const drill = { cl: '', di: '', ch: '' };
+
+  /* ---------- logo ---------- */
+  const FALLBACK_LOGO = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200"><circle cx="100" cy="100" r="94" fill="#3a4724"/><text x="100" y="122" text-anchor="middle" font-family="Georgia,serif" font-size="64" font-weight="700" fill="#e7e2c4">MG</text></svg>');
+  document.querySelectorAll('img.mg-logo').forEach(img => {
+    img.onerror = () => { img.onerror = null; img.src = FALLBACK_LOGO; };
+    img.src = (C.LOGO || 'logo.png') + '?v=' + (C.VERSION || 1);
+  });
+
+  /* ---------- 5-second intro ---------- */
+  (function intro() {
+    const el = $('#intro');
+    if (!el) return;
+    if (/[?&]nointro\b/.test(location.search)) { el.remove(); return; }
+    document.body.classList.add('intro-on');
+    const reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    let finished = false;
+    const done = () => {
+      if (finished) return; finished = true;
+      el.classList.add('out'); document.body.classList.remove('intro-on');
+      setTimeout(() => { el.remove(); if (window.__map) window.__map.invalidateSize(); }, 800);
+    };
+    const t0 = Date.now(), clock = setInterval(() => {
+      const ms = Date.now() - t0;
+      $('#iClock').textContent = '00:' + String(Math.floor(ms / 1000)).padStart(2, '0') + ':' + String(Math.floor(ms % 1000 / 10)).padStart(2, '0');
+      if (finished) clearInterval(clock);
+    }, 40);
+    const lines = ['> ESTABLISHING SECURE CONNECTION…', '> DECRYPTING MASTER GUIDE FILES…', '> VERIFYING INVESTITURE RECORDS…'];
+    let li = 0, ci = 0, cur = null;
+    const type = () => {
+      if (finished || li >= lines.length) return;
+      if (!cur) { cur = document.createElement('div'); $('#iType').appendChild(cur); }
+      cur.textContent = lines[li].slice(0, ++ci);
+      if (ci >= lines[li].length) { li++; ci = 0; cur = null; setTimeout(type, 260); } else setTimeout(type, 24);
+    };
+    setTimeout(type, reduce ? 0 : 500);
+    window.__introCount = n => { const c = $('#iCount'); if (c) c.textContent = Number(n).toLocaleString('en-PH') + ' RECORDS LOCATED'; };
+    setTimeout(() => el.classList.add('granted'), reduce ? 700 : 3900);
+    setTimeout(done, reduce ? 1400 : 5000);
+    $('#iSkip').onclick = done;
+    document.addEventListener('keydown', e => { if (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ') done(); }, { once: true });
+  })();
+
+  function fmtDate(d) {
+    if (!d) return '';
+    const p = String(d).split('-').map(Number);
+    if (p.length !== 3 || !p[0]) return d;
+    return new Date(p[0], p[1] - 1, p[2]).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' });
+  }
+
+  async function load() {
+    try {
+      const demo = /[?&]demo\b/.test(location.search);
+      if (demo) { $('#pvToggle').textContent = 'Show real data'; $('#pvToggle').href = 'preview/'; }
+      if (C.API_URL && !demo) {
+        const r = await fetch(C.API_URL + (C.API_URL.indexOf('?') < 0 ? '?' : '&') + 'action=public');
+        D = await r.json();
+        if (!D.ok) throw new Error(D.error || 'Failed to load');
+      } else {
+        D = demoData();
+        $('#demo').hidden = false;
+      }
+      D.places = D.places || [];
+      init();
+    } catch (e) {
+      console.error(e);
+      $('#kpis').innerHTML = '';
+      $('#list').innerHTML = '<div class="empty">Sorry, the registry could not be loaded right now. Please refresh the page or try again later.</div>';
+    }
+  }
+
+  function init() {
+    if (D.title) { $('#title').textContent = D.title; document.title = D.title; }
+    if (D.subtitle !== undefined) $('#subtitle').textContent = D.subtitle;
+    $('#updated').textContent = D.updated ? 'Updated ' + D.updated : '';
+    const N = D.stages.length, idx = {};
+    D.stages.forEach((s, i) => idx[s.id] = i);
+    people = D.members.map(m => {
+      const si = idx[m.st] !== undefined ? idx[m.st] : -1;
+      return Object.assign({}, m, {
+        si: si, pct: N && si >= 0 ? Math.round((si + 1) / N * 100) : 0, invested: N > 0 && si === N - 1,
+        stageName: si >= 0 ? D.stages[si].name : '—', key: (m.n + ' ' + m.ch + ' ' + m.di + ' ' + m.cl).toLowerCase()
+      });
+    });
+    renderKpis(); renderPipeline(); renderYears(); renderBulletin();
+    renderNewest();
+    fillFilters();
+    ['#q', '#fCluster', '#fDistrict', '#fChurch', '#fStage', '#fSort'].forEach(id => {
+      $(id).addEventListener(id === '#q' ? 'input' : 'change', () => {
+        if (id === '#fCluster') { $('#fDistrict').value = ''; $('#fChurch').value = ''; }
+        if (id === '#fDistrict') $('#fChurch').value = '';
+        if (id === '#fCluster' || id === '#fDistrict') fillPlaces();
+        if (id === '#fCluster' || id === '#fDistrict' || id === '#fChurch') setDrill($('#fCluster').value, $('#fDistrict').value, $('#fChurch').value, { fromFilters: true });
+        page = 1; apply();
+      });
+    });
+    $('#clear').onclick = () => { $('#q').value = ''; $('#fStage').value = ''; setDrill('', '', ''); };
+    setDrill('', '', '', { noFit: false });
+    if (window.__introCount) window.__introCount(people.length);
+  }
+
+  /* ---------- KPIs ---------- */
+  function renderKpis() {
+    const total = people.length, inv = people.filter(p => p.invested).length, rate = total ? Math.round(inv / total * 100) : 0;
+    const churches = uniq(people.map(p => p.cl + '|' + p.di + '|' + p.ch)).length;
+    $('#kpis').innerHTML =
+      kpi('Master Guides listed', fmt(total), 'in ' + fmt(D.clusters.length) + ' clusters · ' + fmt(churches) + ' churches') +
+      kpi('Invested', fmt(inv), 'completed the full program', 'accent') +
+      kpi('In progress', fmt(total - inv), 'still working on requirements') +
+      '<div class="kpi kpi-ring"><div><span class="k-label">Investiture rate</span><b>' + rate + '%</b><small>of all listed</small></div>' + ring(rate, 64) + '</div>';
+  }
+  const kpi = (l, v, sub, cls) => '<div class="kpi ' + (cls || '') + '"><span class="k-label">' + l + '</span><b>' + v + '</b><small>' + sub + '</small></div>';
+  function ring(pct, size) {
+    const r = size / 2 - 6, c = 2 * Math.PI * r;
+    return '<svg class="ring" width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '"><circle cx="' + size / 2 + '" cy="' + size / 2 + '" r="' + r + '" class="r-bg"/>' +
+      '<circle cx="' + size / 2 + '" cy="' + size / 2 + '" r="' + r + '" class="r-fg" stroke-dasharray="' + (pct / 100 * c) + ' ' + c + '" transform="rotate(-90 ' + size / 2 + ' ' + size / 2 + ')"/></svg>';
+  }
+
+  /* ---------- pipeline & years ---------- */
+  function renderPipeline() {
+    const counts = D.stages.map((s, i) => people.filter(p => p.si === i).length), maxC = Math.max(1, ...counts);
+    $('#stageFlow').innerHTML = D.stages.map((s, i) => {
+      const last = i === D.stages.length - 1;
+      return '<button class="stage-chip" data-stage="' + esc(s.id) + '"><span class="f-label">' + (i + 1) + '. ' + esc(s.name) + '</span>' +
+        '<span class="f-track"><span class="f-fill' + (last ? ' done' : '') + '" style="width:' + Math.max(2, counts[i] / maxC * 100) + '%"></span></span><b>' + fmt(counts[i]) + '</b></button>';
+    }).join('') || '<span class="muted">No stages yet.</span>';
+    $('#stageFlow').onclick = e => {
+      const b = e.target.closest('.stage-chip'); if (!b) return;
+      $('#fStage').value = $('#fStage').value === b.dataset.stage ? '' : b.dataset.stage;
+      page = 1; apply(); $('#directory').scrollIntoView({ behavior: 'smooth' });
+    };
+  }
+  function renderYears() {
+    const byYear = {};
+    people.forEach(p => { if (p.invested && /^\d{4}/.test(p.inv || '')) { const y = p.inv.slice(0, 4); byYear[y] = (byYear[y] || 0) + 1; } });
+    const yrs = Object.keys(byYear).sort().slice(-8), maxY = Math.max(1, ...yrs.map(y => byYear[y]));
+    $('#years').innerHTML = yrs.length ? yrs.map(y => '<div class="ycol" title="' + y + ': ' + byYear[y] + ' invested"><b>' + fmt(byYear[y]) + '</b>' +
+      '<span class="ybar" style="height:' + Math.max(4, byYear[y] / maxY * 100) + '%"></span><small>' + y + '</small></div>').join('')
+      : '<span class="muted small">No investiture dates recorded yet.</span>';
+  }
+
+
+  /* ---------- bulletin board ---------- */
+  const B = { posts: [], filter: '', showAllA: false, showAllE: false };
+  const linkify = t => esc(t).replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>').replace(/\n/g, '<br>');
+  const MON = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+  function evWhen(p) {
+    const f = d => { const x = String(d).split('-').map(Number); return new Date(x[0], x[1] - 1, x[2]).toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }); };
+    return f(p.eventDate) + (p.eventEnd && p.eventEnd !== p.eventDate ? ' – ' + f(p.eventEnd) : '') + (p.eventTime ? ' · ' + p.eventTime : '');
+  }
+  const scopeTag = p => p.scope === 'general' ? '<span class="pill gold">General</span>' : '<span class="pill">' + esc(p.scope) + '</span>';
+  function postCard(p) {
+    if (p.kind === 'event') {
+      const x = String(p.eventDate).split('-').map(Number);
+      return '<button class="b-item b-ev" data-pid="' + esc(p.id) + '"><span class="b-date"><small>' + MON[x[1] - 1] + '</small><b>' + x[2] + '</b></span><span class="b-txt">' +
+        '<span class="b-tags">' + scopeTag(p) + (p.pinned ? '<span class="pill done">Pinned</span>' : '') + '</span><b class="b-title">' + esc(p.title) + '</b>' +
+        '<small class="muted">' + esc(evWhen(p)) + (p.venue ? ' · ' + esc(p.venue) : '') + '</small></span></button>';
+    }
+    return '<button class="b-item" data-pid="' + esc(p.id) + '"><span class="b-txt"><span class="b-tags">' + scopeTag(p) + (p.pinned ? '<span class="pill done">Pinned</span>' : '') +
+      '<small class="muted">' + esc(String(p.createdAt).slice(0, 10)) + '</small></span><b class="b-title">' + esc(p.title) + '</b>' +
+      (p.body ? '<span class="b-body">' + esc(p.body.length > 140 ? p.body.slice(0, 140) + '…' : p.body) + '</span>' : '') + '</span></button>';
+  }
+  function sortPosts(list) {
+    const ann = list.filter(p => p.kind !== 'event').sort((a, b) => (!!b.pinned - !!a.pinned) || String(b.createdAt).localeCompare(String(a.createdAt)));
+    const ev = list.filter(p => p.kind === 'event').sort((a, b) => (!!b.pinned - !!a.pinned) || String(a.eventDate).localeCompare(String(b.eventDate)));
+    return { ann: ann, ev: ev };
+  }
+  function openPost(p, dlg) {
+    dlg.innerHTML = '<div class="modal-head"><h2>' + esc(p.title) + '</h2><button class="x" aria-label="Close">×</button></div><div class="modal-body">' +
+      '<div class="b-tags" style="margin-bottom:10px">' + scopeTag(p) + '<span class="pill">' + (p.kind === 'event' ? 'Activity' : 'Announcement') + '</span></div>' +
+      (p.kind === 'event' ? '<dl class="info"><dt>When</dt><dd>' + esc(evWhen(p)) + '</dd>' + (p.venue ? '<dt>Where</dt><dd>' + esc(p.venue) + '</dd>' : '') + '</dl>' : '') +
+      (p.body ? '<div class="b-full">' + linkify(p.body) + '</div>' : '') +
+      '<p class="small muted" style="margin-top:14px">Posted by ' + esc(p.authorName || '') + ' · ' + esc(p.createdAt) + '</p>' +
+      '<div class="toolbar" style="margin:10px 0 0">' + (p.link ? '<a class="btn btn-primary" href="' + esc(p.link) + '" target="_blank" rel="noopener">' + (p.kind === 'event' ? 'Register / More info' : 'Open link') + ' ↗</a>' : '') +
+      '<button type="button" id="bShare">Share</button></div></div>';
+    dlg.querySelector('.x').onclick = () => dlg.close();
+    dlg.querySelector('#bShare').onclick = async () => {
+      const page = location.href.split(/[?#]/)[0].replace(/[^/]*$/, '');
+      const text = p.title + (p.kind === 'event' ? '\n📅 ' + evWhen(p) + (p.venue ? '\n📍 ' + p.venue : '') : '') + (p.body ? '\n\n' + p.body : '') + (p.link ? '\n\n' + p.link : '') + '\n\n' + page;
+      try { if (navigator.share) { await navigator.share({ title: p.title, text: text }); return; } } catch (e) { return; }
+      try { await navigator.clipboard.writeText(text); dlg.querySelector('#bShare').textContent = 'Copied! Paste it in Facebook or Messenger'; }
+      catch (e) { prompt('Copy this text:', text); }
+    };
+    if (!dlg.open) dlg.showModal();
+  }
+
+  function renderBulletin() {
+    B.posts = D.posts || [];
+    $('#bulletin').hidden = !B.posts.length;
+    if (!B.posts.length) return;
+    const scopes = Array.from(new Set(B.posts.filter(p => p.scope !== 'general').map(p => p.scope))).sort();
+    $('#bFilter').innerHTML = [['', 'All'], ['general', 'General']].concat(scopes.map(c => [c, c])).map(x => '<button class="chip' + (B.filter === x[0] ? ' on' : '') + '" data-f="' + esc(x[0]) + '">' + esc(x[1]) + '</button>').join('');
+    const list = B.posts.filter(p => !B.filter || p.scope === B.filter), S2 = sortPosts(list);
+    const block = (arr, all, key, empty) => (arr.length ? (all ? arr : arr.slice(0, 4)).map(postCard).join('') : '<p class="muted small">' + empty + '</p>') +
+      (arr.length > 4 ? '<button class="btn-link b-more" data-more="' + key + '">' + (all ? 'Show less' : 'Show all ' + arr.length) + '</button>' : '');
+    $('#bAnn').innerHTML = block(S2.ann, B.showAllA, 'A', 'No announcements right now.');
+    $('#bEv').innerHTML = block(S2.ev, B.showAllE, 'E', 'No upcoming activities.');
+  }
+  $('#bulletin').addEventListener('click', e => {
+    const f = e.target.closest('[data-f]'), m = e.target.closest('[data-more]'), it = e.target.closest('[data-pid]');
+    if (f) { B.filter = f.dataset.f; renderBulletin(); }
+    if (m) { if (m.dataset.more === 'A') B.showAllA = !B.showAllA; else B.showAllE = !B.showAllE; renderBulletin(); }
+    if (it) openPost(B.posts.find(p => p.id === it.dataset.pid), $('#dlg'));
+  });
+
+  /* ---------- explore by cluster ---------- */
+  const stats = list => { const t = list.length, i = list.filter(p => p.invested).length; return { t: t, i: i, pct: t ? Math.round(i / t * 100) : 0 }; };
+  const $$ = s => Array.from(document.querySelectorAll(s));
+  function setDrill(cl, di, ch, opt) {
+    opt = opt || {};
+    drill.cl = cl || ''; drill.di = drill.cl ? (di || '') : ''; drill.ch = drill.di ? (ch || '') : '';
+    if (!opt.fromFilters) {
+      $('#fCluster').value = drill.cl; fillPlaces();
+      $('#fDistrict').value = drill.di; fillPlaces();
+      $('#fChurch').value = drill.ch;
+      page = 1; apply();
+    }
+    renderExplorer();
+  }
+  function renderExplorer() {
+    const clusters = uniq(D.clusters.concat(people.map(p => p.cl)));
+    $('#xCards').innerHTML = clusters.map(cl => {
+      const st = stats(people.filter(p => p.cl === cl));
+      return '<button class="x-card' + (drill.cl === cl ? ' on' : '') + '" data-cl="' + esc(cl) + '"><span class="x-txt"><span class="k-label">Cluster</span><b>' + esc(cl) + '</b>' +
+        '<small><b>' + fmt(st.i) + '</b> invested of ' + fmt(st.t) + '</small></span><span class="x-ring">' + ring(st.pct, 60) + '<i>' + st.pct + '%</i></span></button>';
+    }).join('') || '<p class="muted">No clusters yet.</p>';
+    const panel = $('#xPanel');
+    if (!drill.cl) { panel.hidden = true; return; }
+    const inC = people.filter(p => p.cl === drill.cl), pl = (D.places || []).filter(p => p.cl === drill.cl);
+    const dists = uniq(inC.map(p => p.di).concat(pl.map(p => p.di)));
+    const nCh = uniq(inC.map(p => p.di + '|' + p.ch).concat(pl.filter(p => p.ch).map(p => p.di + '|' + p.ch))).length;
+    panel.hidden = false;
+    panel.innerHTML = '<div class="x-head"><span><b>' + esc(drill.cl) + '</b> · ' + dists.length + ' district' + (dists.length === 1 ? '' : 's') + ' · ' + nCh + ' church' + (nCh === 1 ? '' : 'es') + '</span><button class="btn-link" data-close>Close ✕</button></div>' +
+      (dists.length ? '<div class="x-dists">' + dists.map(di => {
+        const L = inC.filter(p => p.di === di), st = stats(L);
+        const chs = uniq(L.map(p => p.ch).concat(pl.filter(p => p.di === di).map(p => p.ch)));
+        return '<div class="x-dist' + (drill.di === di ? ' on' : '') + '"><button class="x-dname" data-di="' + esc(di) + '"><b>' + esc(di) + '</b><span>' + fmt(st.i) + ' / ' + fmt(st.t) + '</span></button>' +
+          '<div class="x-bar"><span style="width:' + st.pct + '%"></span></div><div class="x-chs">' +
+          chs.map(ch => '<button class="x-ch' + (drill.di === di && drill.ch === ch ? ' on' : '') + '" data-di="' + esc(di) + '" data-ch="' + esc(ch) + '">' + esc(ch) + ' <b>' + fmt(L.filter(p => p.ch === ch).length) + '</b></button>').join('') + '</div></div>';
+      }).join('') + '</div>' : '<p class="muted small">No districts recorded yet.</p>') +
+      '<p class="small muted" style="margin:0">Click a district or a church to list its Master Guides in the directory below.</p>';
+  }
+  $('#explore').addEventListener('click', e => {
+    const x = e.target.closest('[data-close]'), c = e.target.closest('[data-cl]'), ch = e.target.closest('[data-ch]'), di = e.target.closest('[data-di]');
+    if (x) return setDrill('', '', '');
+    if (c) return setDrill(drill.cl === c.dataset.cl && !drill.di ? '' : c.dataset.cl, '', '');
+    if (ch) { setDrill(drill.cl, ch.dataset.di, ch.dataset.ch); $('#directory').scrollIntoView({ behavior: 'smooth' }); return; }
+    if (di) setDrill(drill.cl, drill.di === di.dataset.di && !drill.ch ? '' : di.dataset.di, '');
+  });
+
+  /* ---------- newest Master Guides ---------- */
+  function renderNewest() {
+    const list = people.filter(p => p.invested && p.inv).sort((a, b) => b.inv.localeCompare(a.inv) || a.n.localeCompare(b.n)).slice(0, 4);
+    $('#newest').hidden = !list.length;
+    $('#newList').innerHTML = list.map(p => {
+      const w = p.n.replace(/[^A-Za-zÀ-ÿ ]/g, ' ').split(/\s+/).filter(x => x.length > 1);
+      const ini = ((w[0] || '?')[0] + (w.length > 1 ? w[w.length - 1][0] : '')).toUpperCase();
+      return '<div class="nw"><span class="nw-av">' + esc(ini) + '</span><span class="nw-t"><b>' + esc(p.n) + '</b><small>' + esc([p.ch, p.cl].filter(Boolean).join(' · ')) + '</small><em>Invested ' + esc(fmtDate(p.inv)) + '</em></span></div>';
+    }).join('');
+  }
+
+  /* ---------- directory ---------- */
+  function opts(list, all) { return '<option value="">' + all + '</option>' + list.map(v => '<option>' + esc(v) + '</option>').join(''); }
+  function fillFilters() {
+    $('#fCluster').innerHTML = opts(uniq(D.clusters.concat(people.map(p => p.cl))), 'All clusters');
+    $('#fStage').innerHTML = '<option value="">All stages</option>' + D.stages.map(s => '<option value="' + esc(s.id) + '">' + esc(s.name) + '</option>').join('');
+    fillPlaces();
+  }
+  function fillPlaces() {
+    const c = $('#fCluster').value, d = $('#fDistrict').value, ch = $('#fChurch').value;
+    const inC = people.filter(p => !c || p.cl === c);
+    $('#fDistrict').innerHTML = opts(uniq(inC.map(p => p.di)), 'All districts');
+    $('#fDistrict').value = d;
+    const inD = inC.filter(p => !$('#fDistrict').value || p.di === $('#fDistrict').value);
+    $('#fChurch').innerHTML = opts(uniq(inD.map(p => p.ch)), 'All churches');
+    $('#fChurch').value = ch;
+  }
+
+  function apply() {
+    const q = $('#q').value.trim().toLowerCase();
+    const c = $('#fCluster').value, d = $('#fDistrict').value, ch = $('#fChurch').value, st = $('#fStage').value;
+    const words = q.split(/\s+/).filter(Boolean);
+    filtered = people.filter(p => (!c || p.cl === c) && (!d || p.di === d) && (!ch || p.ch === ch) && (!st || p.st === st) && words.every(w => p.key.indexOf(w) >= 0));
+    const sort = $('#fSort').value;
+    filtered.sort((a, b) => {
+      if (sort === 'progress') return b.pct - a.pct || a.n.localeCompare(b.n);
+      if (sort === 'invested') return (b.inv || '').localeCompare(a.inv || '') || a.n.localeCompare(b.n);
+      return a.n.localeCompare(b.n);
+    });
+    $$('.stage-chip').forEach(b => b.classList.toggle('active', b.dataset.stage === st));
+    $('#clear').hidden = !(q || c || d || ch || st);
+    render();
+  }
+
+  function render() {
+    const pages = Math.max(1, Math.ceil(filtered.length / PER));
+    if (page > pages) page = pages;
+    const slice = filtered.slice((page - 1) * PER, page * PER);
+    $('#meta').textContent = filtered.length ? 'Showing ' + fmt((page - 1) * PER + 1) + '–' + fmt((page - 1) * PER + slice.length) + ' of ' + fmt(filtered.length) + ' Master Guide' + (filtered.length === 1 ? '' : 's') : '';
+    $('#list').innerHTML = slice.length ? slice.map((p, i) => card(p, (page - 1) * PER + i)).join('') : '<div class="empty">No Master Guide matches your search.</div>';
+    $('#pager').innerHTML = pages > 1 ? pager(pages) : '';
+  }
+  function card(p, i) {
+    const docs = D.showDocCount && D.docsTotal ? '<span>Documents ' + (p.dc || 0) + '/' + D.docsTotal + '</span>' : '<span></span>';
+    return '<article class="card ' + (p.invested ? 'invested' : '') + '" data-i="' + i + '" tabindex="0">' +
+      '<div class="card-top"><h3>' + esc(p.n) + '</h3>' + (p.invested ? '<span class="pill done">Invested</span>' : '') + '</div>' +
+      '<div class="where">' + esc([p.ch, p.di].filter(Boolean).join(' · ') || '—') + '<br>' + esc(p.cl) + '</div>' +
+      '<div class="progress ' + (p.invested ? 'done' : '') + '"><span style="width:' + p.pct + '%"></span></div>' +
+      '<div class="meta"><span class="pill ' + (p.invested ? 'done' : '') + '">' + esc(p.stageName) + '</span><b>' + p.pct + '%</b></div>' +
+      '<div class="meta">' + docs + '<span>' + (p.inv ? 'Invested ' + esc(fmtDate(p.inv)) : '') + '</span></div></article>';
+  }
+  function pager(pages) {
+    const out = [], add = (n, label) => out.push('<button data-p="' + n + '" class="' + (n === page ? 'on' : '') + '">' + (label || n) + '</button>');
+    if (page > 1) add(page - 1, '‹ Prev');
+    const lo = Math.max(1, page - 2), hi = Math.min(pages, page + 2);
+    if (lo > 1) { add(1); if (lo > 2) out.push('<span class="muted">…</span>'); }
+    for (let n = lo; n <= hi; n++) add(n);
+    if (hi < pages) { if (hi < pages - 1) out.push('<span class="muted">…</span>'); add(pages); }
+    if (page < pages) add(page + 1, 'Next ›');
+    return out.join('');
+  }
+  $('#pager').onclick = e => { const b = e.target.closest('button[data-p]'); if (!b) return; page = Number(b.dataset.p); render(); $('#directory').scrollIntoView({ behavior: 'smooth' }); };
+
+  function openCard(el) {
+    const p = filtered[Number(el.dataset.i)]; if (!p) return;
+    const steps = D.stages.map((s, i) => {
+      const cls = (i < p.si || (p.invested && i === p.si)) ? 'done' : (i === p.si ? 'current' : '');
+      return '<li class="' + cls + (i === D.stages.length - 1 ? ' final' : '') + '"><span class="dot">' + (cls === 'done' ? '✓' : i + 1) + '</span>' + esc(s.name) + '</li>';
+    }).join('');
+    const dlg = $('#dlg');
+    dlg.innerHTML = '<div class="modal-head"><h2>' + esc(p.n) + '</h2><button class="x" aria-label="Close">×</button></div><div class="modal-body">' +
+      '<div class="progress ' + (p.invested ? 'done' : '') + '"><span style="width:' + p.pct + '%"></span></div>' +
+      '<div style="display:flex;justify-content:space-between;margin-top:6px;font-size:14px"><span class="pill ' + (p.invested ? 'done' : '') + '">' + esc(p.stageName) + '</span><b>' + p.pct + '% complete</b></div>' +
+      '<dl class="info"><dt>Church</dt><dd>' + esc(p.ch || '—') + '</dd><dt>District</dt><dd>' + esc(p.di || '—') + '</dd><dt>Cluster</dt><dd>' + esc(p.cl || '—') + '</dd>' +
+      '<dt>Date of training</dt><dd>' + esc(fmtDate(p.td) || '—') + '</dd><dt>Date invested</dt><dd>' + esc(fmtDate(p.inv) || '—') + '</dd>' +
+      (D.showDocCount && D.docsTotal ? '<dt>Documents</dt><dd>' + (p.dc || 0) + ' of ' + D.docsTotal + ' submitted</dd>' : '') +
+      '</dl><h3 style="font-size:14px">Progress</h3><ol class="steps">' + steps + '</ol></div>';
+    dlg.querySelector('.x').onclick = () => dlg.close();
+    dlg.showModal();
+  }
+  $('#list').addEventListener('click', e => { const c = e.target.closest('.card'); if (c) openCard(c); });
+  $('#list').addEventListener('keydown', e => { if (e.key === 'Enter') { const c = e.target.closest('.card'); if (c) openCard(c); } });
+  $('#dlg').addEventListener('click', e => { if (e.target.id === 'dlg') e.target.close(); });
+
+  /* ---------- sample data (only when API_URL is empty) ---------- */
+  function demoData() {
+    const stages = ['Enrolled', 'In Training', 'Requirements Complete', 'Approved for Investiture', 'Invested'].map((n, i) => ({ id: 'S' + i, name: n }));
+    const geo = {
+      'Cluster 1': { at: [7.07, 125.61], d: { 'North District': ['Riverside Church', 'Hillcrest Church', 'Pinecrest Church'], 'East District': ['Sunrise Church', 'Maple Church'] } },
+      'Cluster 2': { at: [7.45, 125.80], d: { 'Central District': ['Central Church', 'Garden Church'], 'West District': ['Lakeview Church', 'Cedar Church', 'Valley Church'] } },
+      'Cluster 3': { at: [6.75, 125.36], d: { 'Coastal District': ['Seaside Church', 'Harbor Church'], 'Island District': ['Palm Church', 'Bayview Church'] } }
+    };
+    let seed = 7; const rnd = n => { seed = (seed * 9301 + 49297) % 233280; return Math.floor(seed / 233280 * n); };
+    const places = [], list = [];
+    Object.keys(geo).forEach(cl => Object.keys(geo[cl].d).forEach((di, j) => geo[cl].d[di].forEach((ch, k) => {
+      const lat = geo[cl].at[0] + (j ? .09 : -.09) + (k - 1) * .035, lng = geo[cl].at[1] + (j ? .1 : -.1) + (k % 2 ? .04 : -.03);
+      places.push({ t: 'church', cl: cl, di: di, ch: ch, lat: lat, lng: lng }); list.push([cl, di, ch]);
+    })));
+    const first = ['Maria', 'Jose', 'Ana', 'Mark', 'Grace', 'John', 'Joy', 'Paul', 'Ruth', 'Daniel', 'Faith', 'Samuel', 'Hope', 'David', 'Esther', 'Joel', 'Mercy', 'Caleb'];
+    const last = ['Santos', 'Reyes', 'Cruz', 'Bautista', 'Garcia', 'Mendoza', 'Torres', 'Flores', 'Ramos', 'Villanueva', 'Castillo', 'Navarro', 'Aquino', 'Lim'];
+    const members = [];
+    for (let i = 0; i < 160; i++) {
+      const w = list[rnd(list.length)], si = rnd(10) < 4 ? 4 : rnd(4), yr = 2019 + rnd(6);
+      members.push({ n: first[rnd(first.length)] + ' ' + String.fromCharCode(65 + rnd(26)) + '. ' + last[rnd(last.length)], cl: w[0], di: w[1], ch: w[2],
+        td: yr + '-0' + (1 + rnd(9)) + '-1' + rnd(9), inv: si === 4 ? (yr + 1) + '-0' + (1 + rnd(9)) + '-2' + rnd(8) : '', st: 'S' + si, dc: si === 4 ? 6 : Math.min(6, si + rnd(3)) });
+    }
+    const dd = n => { const x = new Date(); x.setDate(x.getDate() + n); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
+    const posts = [
+      { id: 'p1', kind: 'announcement', scope: 'general', title: 'Submit your Master Guide requirements', body: 'All candidates for this year\'s investiture, please submit your complete requirements to your Cluster Coordinator.', pinned: true, createdAt: dd(-2) + ' 09:00', authorName: 'Master Guide Director' },
+      { id: 'p2', kind: 'event', scope: 'general', title: 'Mission-wide Master Guide Investiture', eventDate: dd(21), eventTime: '8:00 AM', venue: 'Mission Office', body: 'Sample activity.', pinned: false, createdAt: dd(-1) + ' 10:00', authorName: 'Master Guide Director' },
+      { id: 'p3', kind: 'event', scope: 'Cluster 2', title: 'CMT Basic Staff Training', eventDate: dd(9), eventEnd: dd(10), venue: 'Central Church', body: 'Sample activity.', createdAt: dd(-3) + ' 14:00', authorName: 'Cluster 2 Coordinator' },
+      { id: 'p4', kind: 'announcement', scope: 'Cluster 1', title: 'Cluster meeting this Sabbath afternoon', body: 'Sample announcement.', createdAt: dd(-1) + ' 18:00', authorName: 'Cluster 1 Coordinator' }
+    ];
+    return { ok: true, title: 'Davao Mission Master Guides', subtitle: 'Master Guide Progress & Investiture Registry', showDocCount: true, docsTotal: 6, stages: stages, clusters: Object.keys(geo), members: members, places: places, posts: posts, updated: '' };
+  }
+
+  load();
+})();
+</script>
+</body>
+</html>
