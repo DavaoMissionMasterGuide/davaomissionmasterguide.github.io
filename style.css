@@ -360,3 +360,23 @@ body.intro-on{overflow:hidden}
 .tr-add summary{cursor:pointer;color:var(--green);font-weight:700;font-size:13px}
 
 .credit{font-size:11.5px;color:#8a8e78;text-align:center;margin:10px 0 0;letter-spacing:.01em}
+/* bulletin board */
+.bulletin{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media (max-width:860px){.bulletin{grid-template-columns:1fr}}
+.bulletin .panel{margin-top:0}
+.b-list{display:flex;flex-direction:column;gap:8px}
+.b-item{display:flex;gap:12px;align-items:flex-start;text-align:left;width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;font-weight:400}
+.b-item:hover{border-color:var(--navy-2);background:#f8f9f2}
+.b-date{flex:none;width:52px;border-radius:8px;background:var(--navy);color:#fff;text-align:center;padding:5px 0;line-height:1.1}
+.b-date small{display:block;font-size:10.5px;letter-spacing:.1em;color:#d6cf9e;font-weight:700}
+.b-date b{font:700 22px Georgia,serif}
+.b-txt{display:flex;flex-direction:column;gap:3px;min-width:0}
+.b-tags{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.b-title{font-size:15px;color:var(--ink)}
+.b-body{font-size:13px;color:var(--muted)}
+.b-full{font-size:15px;line-height:1.6;white-space:normal}
+.b-more{margin-top:4px;font-size:13px}
+.b-h{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:6px 0 8px}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{border-radius:99px;padding:5px 12px;font-size:13px;font-weight:600;background:#fff}
+.chip.on{background:var(--navy);border-color:var(--navy);color:#fff}

@@ -8,7 +8,7 @@
 <link rel="icon" href="favicon.png">
 <link rel="apple-touch-icon" href="system-mark-192.png">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-<link rel="stylesheet" href="style.css?v=10">
+<link rel="stylesheet" href="style.css?v=11">
 <script src="config.js?v=9"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 </head>
@@ -184,7 +184,7 @@
 
   /* ---------------- main layout ---------------- */
   function showMain() {
-    const tabs = [['members', 'Master Guides'], ['requests', 'Requests' + (S.pendingRequests ? ' <span class="badge">' + S.pendingRequests + '</span>' : '')], ['import', 'Import'], ['map', 'Map Pins']];
+    const tabs = [['members', 'Master Guides'], ['requests', 'Requests' + (S.pendingRequests ? ' <span class="badge">' + S.pendingRequests + '</span>' : '')], ['bulletin', 'Bulletin'], ['import', 'Import'], ['map', 'Map Pins']];
     if (isDir()) tabs.push(['stages', 'Stages & Documents'], ['clusters', 'Clusters'], ['accounts', 'Accounts'], ['settings', 'Settings'], ['log', 'Activity Log']);
     tabs.push(['password', 'My Password']);
     if (!tabs.some(t => t[0] === S.tab)) S.tab = 'members';
@@ -206,7 +206,7 @@
 
   function renderTab() {
     const v = $('#view');
-    ({ members: viewMembers, requests: viewRequests, import: viewImport, map: viewMap, stages: viewStages, clusters: viewClusters, accounts: viewAccounts, settings: viewSettings, log: viewLog, password: viewPassword })[S.tab](v);
+    ({ members: viewMembers, requests: viewRequests, bulletin: viewBulletin, import: viewImport, map: viewMap, stages: viewStages, clusters: viewClusters, accounts: viewAccounts, settings: viewSettings, log: viewLog, password: viewPassword })[S.tab](v);
   }
 
   /* ---------------- Master Guides ---------------- */
@@ -425,6 +425,60 @@
     } catch (e) { if (w) w.close(); handleErr(e); }
   }
   async function refreshBadge() { try { const j = await api('listRequests'); setBadge(j.pending.length + (j.trainings || []).length); } catch (e) {} }
+
+  /* ---------------- Bulletin ---------------- */
+  let POSTS = [], showOld = false;
+  async function viewBulletin(v) {
+    v.innerHTML = '<div class="toolbar"><h2 style="font-size:17px">Bulletin board</h2><span class="muted small">' + (isDir() ? 'Post General announcements for the whole Mission, or for one cluster.' : 'Post announcements and activities for ' + esc(S.user.cluster) + '. General posts come from the Director.') + '</span>' +
+      '<span class="spacer"></span><label class="small" style="display:flex;gap:6px;align-items:center;margin:0;font-weight:500"><input type="checkbox" id="bOld" style="width:auto"' + (showOld ? ' checked' : '') + '> Show past / expired</label>' +
+      '<button id="bNewA">+ Announcement</button><button class="btn-primary" id="bNewE">+ Activity</button></div><div id="bList">Loading…</div>';
+    $('#bNewA').onclick = () => openPostEditor({ kind: 'announcement' });
+    $('#bNewE').onclick = () => openPostEditor({ kind: 'event' });
+    $('#bOld').onchange = e => { showOld = e.target.checked; drawPosts(); };
+    try { POSTS = (await api('listPosts')).posts; drawPosts(); } catch (e) { handleErr(e); }
+  }
+  function drawPosts() {
+    const list = POSTS.filter(p => showOld || p.active).sort((a, b) => (b.active - a.active) || (b.pinned - a.pinned) || String(b.updatedAt).localeCompare(String(a.updatedAt)));
+    $('#bList').innerHTML = list.length ? '<div class="table-wrap"><table><thead><tr><th>Title</th><th>Type</th><th>For</th><th>Date / show until</th><th>Status</th><th>By</th></tr></thead><tbody>' +
+      list.map(p => '<tr class="' + (p.canEdit ? 'click' : '') + '" data-pid="' + esc(p.id) + '"><td><b>' + esc(p.title) + '</b>' + (p.pinned ? ' <span class="pill done">Pinned</span>' : '') + '</td>' +
+        '<td>' + (p.kind === 'event' ? 'Activity' : 'Announcement') + '</td><td>' + (p.scope === 'general' ? '<span class="pill gold">General</span>' : '<span class="pill">' + esc(p.scope) + '</span>') + '</td>' +
+        '<td class="small">' + esc(p.kind === 'event' ? (p.eventDate + (p.eventEnd ? ' – ' + p.eventEnd : '')) : (p.expires ? 'until ' + p.expires : 'no end date')) + '</td>' +
+        '<td>' + (p.active ? '<span class="pill done">Showing</span>' : '<span class="pill off">Ended</span>') + '</td><td class="small">' + esc(p.authorName) + (p.canEdit ? '' : ' <span class="muted">(view only)</span>') + '</td></tr>').join('') + '</tbody></table></div>'
+      : '<div class="empty">No posts yet. Click <b>+ Announcement</b> or <b>+ Activity</b>.</div>';
+    $('#bList').onclick = e => { const tr = e.target.closest('tr[data-pid]'); if (!tr) return; const p = POSTS.find(x => x.id === tr.dataset.pid); if (p && p.canEdit) openPostEditor(p); };
+  }
+  function openPostEditor(p) {
+    const isNew = !p.id, ev = p.kind === 'event';
+    const plus = n => { const x = new Date(); x.setDate(x.getDate() + n); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
+    const scopeSel = isDir()
+      ? '<select id="pScope"><option value="general"' + (p.scope === 'general' || !p.scope ? ' selected' : '') + '>General (whole Mission)</option>' + S.clusters.map(c => '<option' + (p.scope === c ? ' selected' : '') + '>' + esc(c) + '</option>').join('') + '</select>'
+      : '<input id="pScope" value="' + esc(S.user.cluster) + '" disabled>';
+    const body = '<div class="grid2"><div class="field"><label>Type</label><select id="pKind"><option value="announcement"' + (!ev ? ' selected' : '') + '>Announcement</option><option value="event"' + (ev ? ' selected' : '') + '>Activity / event</option></select></div>' +
+      '<div class="field"><label>For</label>' + scopeSel + '</div></div>' +
+      '<div class="field"><label>Title *</label><input id="pTitle" maxlength="120" value="' + esc(p.title || '') + '" placeholder="' + (ev ? 'e.g. CMT Basic Staff Training' : 'e.g. Submit your requirements by Dec 15') + '"></div>' +
+      '<div id="pEvFields"><div class="grid2"><div class="field"><label>Date *</label><input id="pDate" type="date" value="' + esc(p.eventDate || '') + '"></div><div class="field"><label>End date <span class="muted">(if more than 1 day)</span></label><input id="pEnd" type="date" value="' + esc(p.eventEnd || '') + '"></div></div>' +
+      '<div class="grid2"><div class="field"><label>Time</label><input id="pTime" value="' + esc(p.eventTime || '') + '" placeholder="e.g. 8:00 AM – 5:00 PM"></div><div class="field"><label>Venue</label><input id="pVenue" value="' + esc(p.venue || '') + '" placeholder="e.g. Davao Mission Office"></div></div></div>' +
+      '<div class="field"><label>Message</label><textarea id="pBody" rows="6" placeholder="Details, reminders, what to bring…">' + esc(p.body || '') + '</textarea></div>' +
+      '<div class="field"><label>Link <span class="muted">(optional — registration form, Facebook post…)</span></label><input id="pLink" value="' + esc(p.link || '') + '" placeholder="https://"></div>' +
+      '<div class="grid2"><div class="field" id="pExpWrap"><label>Show until</label><input id="pExp" type="date" value="' + esc(isNew ? plus(30) : (p.expires || '')) + '"><p class="small muted" style="margin:4px 0 0">Leave blank to keep showing.</p></div>' +
+      '<div class="field"><label>&nbsp;</label><div class="checks" style="grid-template-columns:1fr"><label><input type="checkbox" id="pPin"' + (p.pinned ? ' checked' : '') + '> Pin to the top</label></div></div></div>' +
+      '<p class="small muted">Activities disappear automatically after their date. It shows on the public page within a minute.</p>';
+    const foot = (isNew ? '' : '<button class="btn-danger left" id="pDel">Delete</button>') + '<button id="pCancel">Cancel</button><button class="btn-primary" id="pSave">' + (isNew ? 'Post' : 'Save') + '</button>';
+    const d = openModal(isNew ? (ev ? 'New activity' : 'New announcement') : 'Edit post', body, foot, true);
+    const kindUi = () => { const e = $('#pKind').value === 'event'; $('#pEvFields').hidden = !e; $('#pExpWrap').style.visibility = e ? 'hidden' : 'visible'; };
+    kindUi(); $('#pKind').onchange = kindUi;
+    $('#pCancel').onclick = () => d.close();
+    if ($('#pDel')) $('#pDel').onclick = e => { if (confirm('Delete "' + p.title + '"?')) busy(e.target, async () => { POSTS = (await api('deletePost', { id: p.id })).posts; d.close(); drawPosts(); toast('Post deleted.', 'ok'); }); };
+    $('#pSave').onclick = e => {
+      if (!$('#pTitle').value.trim()) return toast('Please enter a title.', 'err');
+      busy(e.target, async () => {
+        const j = await api('savePost', { post: { id: p.id || '', kind: $('#pKind').value, scope: $('#pScope').value, title: $('#pTitle').value, body: $('#pBody').value,
+          eventDate: $('#pDate').value, eventEnd: $('#pEnd').value, eventTime: $('#pTime').value, venue: $('#pVenue').value, link: $('#pLink').value.trim(), expires: $('#pExp').value, pinned: $('#pPin').checked } });
+        POSTS = j.posts; d.close(); drawPosts(); toast(isNew ? 'Posted!' : 'Saved.', 'ok');
+      });
+    };
+    $('#pTitle').focus();
+  }
 
   /* ---------------- Requests (sign-ups & corrections) ---------------- */
   const normName = s => String(s || '').toLowerCase().replace(/[^a-z0-9ñ ]+/g, ' ').split(/\s+/).filter(w => w.length > 1);

@@ -28,7 +28,8 @@ const SHEETS = {
   Places:    ['type', 'cluster', 'district', 'church', 'lat', 'lng', 'address', 'updatedAt', 'updatedBy'],
   Requests:  ['id', 'type', 'userId', 'username', 'memberId', 'cluster', 'payload', 'status', 'createdAt', 'decidedBy', 'decidedAt', 'reply'],
   Trainings: ['id', 'name', 'order'],
-  PersonTrainings: ['id', 'memberId', 'cluster', 'trainingId', 'customName', 'date', 'place', 'notes', 'status', 'certFileId', 'certName', 'addedBy', 'addedAt', 'verifiedBy', 'verifiedAt', 'reply']
+  PersonTrainings: ['id', 'memberId', 'cluster', 'trainingId', 'customName', 'date', 'place', 'notes', 'status', 'certFileId', 'certName', 'addedBy', 'addedAt', 'verifiedBy', 'verifiedAt', 'reply'],
+  Posts: ['id', 'kind', 'scope', 'title', 'body', 'eventDate', 'eventEnd', 'eventTime', 'venue', 'link', 'pinned', 'expires', 'author', 'authorName', 'createdAt', 'updatedAt']
 };
 
 // Starting list of trainings (the Director can edit it in the admin site).
@@ -45,7 +46,7 @@ const DEFAULT_TRAININGS = [
 const MEMBER_ACTIONS = ['me', 'logout', 'changePassword', 'myProfile', 'updateContact', 'requestChange', 'myCert', 'addMyTraining', 'deleteMyTraining', 'myTrainingCert'];
 const CHANGE_FIELDS = { fullName: 'Full name', district: 'District', church: 'Church', trainingDate: 'Date of training', investedDate: 'Date invested', other: 'Other' };
 
-const READ_ONLY = ['me', 'bootstrap', 'getCert', 'listUsers', 'getLog', 'myProfile', 'myCert', 'listRequests', 'listMemberTrainings', 'getTrainingCert', 'myTrainingCert'];
+const READ_ONLY = ['listPosts', 'me', 'bootstrap', 'getCert', 'listUsers', 'getLog', 'myProfile', 'myCert', 'listRequests', 'listMemberTrainings', 'getTrainingCert', 'myTrainingCert'];
 
 const ACTIONS = {
   me: (u) => ({ user: pubUser_(u) }),
@@ -83,7 +84,10 @@ const ACTIONS = {
   getTrainingCert: getTrainingCert_,
   addMyTraining: addMyTraining_,
   deleteMyTraining: deleteMyTraining_,
-  myTrainingCert: myTrainingCert_
+  myTrainingCert: myTrainingCert_,
+  listPosts: listPosts_,
+  savePost: savePost_,
+  deletePost: deletePost_
 };
 
 /* ============================== SETUP ============================== */
@@ -203,6 +207,7 @@ function publicData_() {
   return {
     ok: true, title: s.siteTitle || '', subtitle: s.subtitle || '', showDocCount: showDocs, docsTotal: docs.length,
     stages: stages, clusters: readAll_('Clusters').map(c => c.name), members: members,
+    posts: activePosts_(null),
     places: readAll_('Places').map(p => ({ t: p.type, cl: p.cluster, di: p.district, ch: p.church, lat: Number(p.lat), lng: Number(p.lng) })),
     updated: nowStr_()
   };
@@ -550,6 +555,7 @@ function saveClusters_(u, r) {
       renameColumn_('Places', 'cluster', renames);
       renameColumn_('Requests', 'cluster', renames);
       renameColumn_('PersonTrainings', 'cluster', renames);
+      renameColumn_('Posts', 'scope', renames);
     }
     writeAll_('Clusters', items.map(x => ({ name: x.name })));
     log_(u, 'Update clusters', items.map(x => x.name).join(', '));
@@ -739,7 +745,8 @@ function myProfile_(u) {
     documents: sortedList_('Documents'),
     requests: readAll_('Requests').filter(x => x.userId === u.id && x.type === 'change').map(requestOut_).reverse().slice(0, 30),
     trainings: trainingCatalog_(),
-    myTrainings: m ? trainingsOf_(m.id) : []
+    myTrainings: m ? trainingsOf_(m.id) : [],
+    posts: activePosts_(u.cluster)
   };
 }
 
@@ -1012,6 +1019,78 @@ function myTrainingCert_(u, r) {
   if (!x || !x.certFileId) throw new Error('No certificate for this training.');
   const blob = DriveApp.getFileById(x.certFileId).getBlob();
   return { name: x.certName, mime: blob.getContentType(), data: Utilities.base64Encode(blob.getBytes()) };
+}
+
+/* ============================== BULLETIN BOARD ============================== */
+// scope = 'general' (Director only) or a cluster name (that cluster's coordinator, or the Director)
+
+function todayStr_() { return Utilities.formatDate(new Date(), tz_(), 'yyyy-MM-dd'); }
+function postOut_(p) {
+  return { id: p.id, kind: p.kind, scope: p.scope, title: p.title, body: p.body, eventDate: p.eventDate, eventEnd: p.eventEnd,
+    eventTime: p.eventTime, venue: p.venue, link: p.link, pinned: p.pinned === 'true', expires: p.expires,
+    authorName: p.authorName, createdAt: p.createdAt, updatedAt: p.updatedAt };
+}
+function isActivePost_(p, today) {
+  if (p.kind === 'event') return (p.eventEnd || p.eventDate || '9999') >= today;
+  return !p.expires || p.expires >= today;
+}
+// active posts for the public page (cluster = null → all) or for one Master Guide (general + their cluster)
+function activePosts_(cluster) {
+  const today = todayStr_();
+  return readAll_('Posts').filter(p => isActivePost_(p, today) && (cluster === null || p.scope === 'general' || p.scope === cluster)).map(postOut_);
+}
+function listPosts_(u) {
+  const today = todayStr_();
+  return { posts: readAll_('Posts').filter(p => isDir_(u) || p.scope === u.cluster || p.scope === 'general')
+    .map(p => Object.assign(postOut_(p), { active: isActivePost_(p, today), canEdit: isDir_(u) || p.scope === u.cluster })) };
+}
+function savePost_(u, r) {
+  const d = r.post || {};
+  const kind = d.kind === 'event' ? 'event' : 'announcement';
+  let scope = clean_(d.scope, 80) || 'general';
+  if (scope !== 'general' && readAll_('Clusters').map(c => c.name).indexOf(scope) < 0) throw new Error('Choose General or a valid cluster.');
+  if (!isDir_(u)) {
+    if (scope === 'general') throw new Error('Only the Master Guide Director can post General announcements.');
+    if (scope !== u.cluster) throw new Error('You can only post for ' + u.cluster + '.');
+  }
+  const title = clean_(d.title, 120);
+  if (!title) throw new Error('Please enter a title.');
+  const body = String(d.body || '').replace(/\r\n/g, '\n').trim().slice(0, 3000);
+  const link = clean_(d.link, 500);
+  if (link && !/^https?:\/\/\S+$/i.test(link)) throw new Error('The link must start with http:// or https://');
+  const eventDate = date_(d.eventDate, 'Activity date'), eventEnd = date_(d.eventEnd, 'End date'), expires = date_(d.expires, 'Show until');
+  if (kind === 'event' && !eventDate) throw new Error('Please enter the date of the activity.');
+  if (eventEnd && eventDate && eventEnd < eventDate) throw new Error('The end date is before the start date.');
+  return withLock_(() => {
+    const all = readAll_('Posts');
+    let ex = null;
+    if (d.id) {
+      ex = all.find(x => x.id === d.id);
+      if (!ex) throw new Error('Post not found (it may have been deleted).');
+      if (!isDir_(u) && ex.scope !== u.cluster) throw new Error('You can only edit posts for ' + u.cluster + '.');
+    }
+    const rec = {
+      id: ex ? ex.id : newId_('P'), kind: kind, scope: scope, title: title, body: body,
+      eventDate: kind === 'event' ? eventDate : '', eventEnd: kind === 'event' ? eventEnd : '', eventTime: kind === 'event' ? clean_(d.eventTime, 60) : '',
+      venue: kind === 'event' ? clean_(d.venue, 150) : '', link: link, pinned: d.pinned ? 'true' : 'false', expires: kind === 'event' ? '' : expires,
+      author: ex ? ex.author : u.username, authorName: ex ? ex.authorName : (u.name || u.username),
+      createdAt: ex ? ex.createdAt : nowStr_(), updatedAt: nowStr_()
+    };
+    // a bare multi-line body: keep line breaks (clean_ is not used on it); still stop formulas
+    if (ex) updateRow_('Posts', ex._row, rec); else appendRows_('Posts', [rec]);
+    log_(u, ex ? 'Edit post' : 'New post', (scope === 'general' ? 'General' : scope) + ': ' + title);
+    return listPosts_(u);
+  });
+}
+function deletePost_(u, r) {
+  return withLock_(() => {
+    const p = readAll_('Posts').find(x => x.id === r.id);
+    if (!p) throw new Error('Post not found.');
+    if (!isDir_(u) && p.scope !== u.cluster) throw new Error('You can only delete posts for ' + u.cluster + '.');
+    sheet_('Posts').deleteRow(p._row);
+    log_(u, 'Delete post', p.title);
+    return listPosts_(u);
+  });
 }
 
 /* ============================== SETTINGS & LOG ============================== */

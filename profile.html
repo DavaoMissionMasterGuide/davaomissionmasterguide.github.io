@@ -7,7 +7,7 @@
 <title>My Profile · Master Guide Registry</title>
 <link rel="icon" href="favicon.png">
 <link rel="apple-touch-icon" href="system-mark-192.png">
-<link rel="stylesheet" href="style.css?v=10">
+<link rel="stylesheet" href="style.css?v=11">
 <script src="config.js?v=9"></script>
 </head>
 <body class="admin profile">
@@ -208,6 +208,7 @@
       '<h2 style="margin-top:18px">Certificate</h2>' + (m.hasCert ? '<p class="muted small">Your certificate is on file.</p><button class="btn-primary" id="cert">Download my certificate</button>' : '<p class="muted small">No certificate uploaded yet. Your coordinator uploads it after investiture.</p>') + '</section>' +
       '</div>' +
 
+      bulletinCard(P) +
       trainingsCard(P) +
       '<div class="two-col">' +
       '<form class="card-box" id="contact"><h2>My contact info</h2><p class="muted small">Only you and your coordinators can see this. It is never shown publicly.</p>' +
@@ -232,6 +233,10 @@
 
     $('#out').onclick = () => signOut();
     bindTrainings();
+    document.querySelectorAll('[data-pid]').forEach(b => b.onclick = () => {
+      let dlg = document.getElementById('pdlg'); if (!dlg) { dlg = document.createElement('dialog'); dlg.id = 'pdlg'; document.body.appendChild(dlg); }
+      openPost((S.prof.posts || []).find(p => p.id === b.dataset.pid), dlg);
+    });
     if ($('#cert')) $('#cert').onclick = e => busy(e.target, async () => {
       const j = await api('myCert');
       const bin = atob(j.data), bytes = new Uint8Array(bin.length);
@@ -258,6 +263,59 @@
       if ($('#pN1').value !== $('#pN2').value) return toast('The new passwords do not match.', 'err');
       busy($('#pBtn'), async () => { await api('changePassword', { oldPassword: $('#pOld').value, newPassword: $('#pN1').value }); toast('Password changed.', 'ok'); ['#pOld', '#pN1', '#pN2'].forEach(i => $(i).value = ''); });
     };
+  }
+
+
+  /* ---------- bulletin board ---------- */
+  const B = { posts: [], filter: '', showAllA: false, showAllE: false };
+  const linkify = t => esc(t).replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>').replace(/\n/g, '<br>');
+  const MON = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+  function evWhen(p) {
+    const f = d => { const x = String(d).split('-').map(Number); return new Date(x[0], x[1] - 1, x[2]).toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }); };
+    return f(p.eventDate) + (p.eventEnd && p.eventEnd !== p.eventDate ? ' – ' + f(p.eventEnd) : '') + (p.eventTime ? ' · ' + p.eventTime : '');
+  }
+  const scopeTag = p => p.scope === 'general' ? '<span class="pill gold">General</span>' : '<span class="pill">' + esc(p.scope) + '</span>';
+  function postCard(p) {
+    if (p.kind === 'event') {
+      const x = String(p.eventDate).split('-').map(Number);
+      return '<button class="b-item b-ev" data-pid="' + esc(p.id) + '"><span class="b-date"><small>' + MON[x[1] - 1] + '</small><b>' + x[2] + '</b></span><span class="b-txt">' +
+        '<span class="b-tags">' + scopeTag(p) + (p.pinned ? '<span class="pill done">Pinned</span>' : '') + '</span><b class="b-title">' + esc(p.title) + '</b>' +
+        '<small class="muted">' + esc(evWhen(p)) + (p.venue ? ' · ' + esc(p.venue) : '') + '</small></span></button>';
+    }
+    return '<button class="b-item" data-pid="' + esc(p.id) + '"><span class="b-txt"><span class="b-tags">' + scopeTag(p) + (p.pinned ? '<span class="pill done">Pinned</span>' : '') +
+      '<small class="muted">' + esc(String(p.createdAt).slice(0, 10)) + '</small></span><b class="b-title">' + esc(p.title) + '</b>' +
+      (p.body ? '<span class="b-body">' + esc(p.body.length > 140 ? p.body.slice(0, 140) + '…' : p.body) + '</span>' : '') + '</span></button>';
+  }
+  function sortPosts(list) {
+    const ann = list.filter(p => p.kind !== 'event').sort((a, b) => (!!b.pinned - !!a.pinned) || String(b.createdAt).localeCompare(String(a.createdAt)));
+    const ev = list.filter(p => p.kind === 'event').sort((a, b) => (!!b.pinned - !!a.pinned) || String(a.eventDate).localeCompare(String(b.eventDate)));
+    return { ann: ann, ev: ev };
+  }
+  function openPost(p, dlg) {
+    dlg.innerHTML = '<div class="modal-head"><h2>' + esc(p.title) + '</h2><button class="x" aria-label="Close">×</button></div><div class="modal-body">' +
+      '<div class="b-tags" style="margin-bottom:10px">' + scopeTag(p) + '<span class="pill">' + (p.kind === 'event' ? 'Activity' : 'Announcement') + '</span></div>' +
+      (p.kind === 'event' ? '<dl class="info"><dt>When</dt><dd>' + esc(evWhen(p)) + '</dd>' + (p.venue ? '<dt>Where</dt><dd>' + esc(p.venue) + '</dd>' : '') + '</dl>' : '') +
+      (p.body ? '<div class="b-full">' + linkify(p.body) + '</div>' : '') +
+      '<p class="small muted" style="margin-top:14px">Posted by ' + esc(p.authorName || '') + ' · ' + esc(p.createdAt) + '</p>' +
+      '<div class="toolbar" style="margin:10px 0 0">' + (p.link ? '<a class="btn btn-primary" href="' + esc(p.link) + '" target="_blank" rel="noopener">' + (p.kind === 'event' ? 'Register / More info' : 'Open link') + ' ↗</a>' : '') +
+      '<button type="button" id="bShare">Share</button></div></div>';
+    dlg.querySelector('.x').onclick = () => dlg.close();
+    dlg.querySelector('#bShare').onclick = async () => {
+      const page = location.href.split(/[?#]/)[0].replace(/[^/]*$/, '');
+      const text = p.title + (p.kind === 'event' ? '\n📅 ' + evWhen(p) + (p.venue ? '\n📍 ' + p.venue : '') : '') + (p.body ? '\n\n' + p.body : '') + (p.link ? '\n\n' + p.link : '') + '\n\n' + page;
+      try { if (navigator.share) { await navigator.share({ title: p.title, text: text }); return; } } catch (e) { return; }
+      try { await navigator.clipboard.writeText(text); dlg.querySelector('#bShare').textContent = 'Copied! Paste it in Facebook or Messenger'; }
+      catch (e) { prompt('Copy this text:', text); }
+    };
+    if (!dlg.open) dlg.showModal();
+  }
+
+  function bulletinCard(P) {
+    const S2 = sortPosts(P.posts || []), items = S2.ev.slice(0, 4).concat(S2.ann.slice(0, 4));
+    if (!items.length) return '';
+    return '<section class="card-box"><h2>Bulletin <span class="muted small">General and ' + esc(P.member ? P.member.cluster : '') + '</span></h2>' +
+      '<div class="bulletin"><div><h3 class="b-h">Upcoming activities</h3><div class="b-list" id="pbEv">' + (S2.ev.slice(0, 4).map(postCard).join('') || '<p class="muted small">None right now.</p>') + '</div></div>' +
+      '<div><h3 class="b-h">Announcements</h3><div class="b-list" id="pbAnn">' + (S2.ann.slice(0, 4).map(postCard).join('') || '<p class="muted small">None right now.</p>') + '</div></div></div></section>';
   }
 
   /* ---------------- personal trainings ---------------- */

@@ -85,6 +85,9 @@ Master Guides open `profile.html` (link "Master Guide: My Profile" at the bottom
 ## Personal trainings
 Each Master Guide can add the trainings they have completed (CMT certifications, PLA, APLA/PIA, others) in **My Profile**, with date, venue and an optional certificate. Their coordinator verifies them in the admin **Requests** tab, or adds them directly inside the Master Guide's record. The Director edits the list of trainings in **Stages & Documents → Trainings list**. Trainings are private (not on the public page).
 
+## Bulletin board
+Admin **Bulletin** tab: the Director posts **General** announcements and activities (or for any cluster); each Cluster Coordinator posts for their own cluster. Posts show at the top of the public page (filter: All / General / cluster) and on each Master Guide's **My Profile** (General + their cluster). Announcements hide after their "Show until" date; activities hide after they happen. Pin important posts to keep them on top.
+
 ## Who can do what
 
 | | Director | Cluster Coordinator | Public |
