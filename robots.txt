@@ -4,5 +4,6 @@ Disallow: /admin.html
 Disallow: /profile.html
 Disallow: /apps-script/
 Disallow: /preview/
+Disallow: /v2/
 
 Sitemap: https://davaomissionmasterguide.github.io/sitemap.xml

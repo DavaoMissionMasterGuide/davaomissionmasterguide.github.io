@@ -1,0 +1,815 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Admin · Master Guide Registry</title>
+<link rel="icon" href="favicon.png">
+<link rel="apple-touch-icon" href="system-mark-192.png">
+<link rel="stylesheet" href="style.css?v=20">
+<script src="config.js?v=20"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supa.js?v=20"></script>
+</head>
+<body class="admin">
+<div id="app"><div class="login-wrap"><div class="login-card">Loading…</div></div></div>
+<dialog id="modal"></dialog>
+<div id="toast"></div>
+
+<script>
+(function () {
+  const C = window.MG_CONFIG || {};
+  const $ = (s, el) => (el || document).querySelector(s);
+  const $$ = (s, el) => Array.from((el || document).querySelectorAll(s));
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const fmt = n => Number(n).toLocaleString('en-PH');
+  const PER = 50;
+  const S = { token: null, user: null, stages: [], documents: [], clusters: [], members: [], settings: {}, cfg: {}, tab: 'members', users: [] };
+  const F = { q: '', cluster: '', stage: '', page: 1 };
+  const store = {
+    get: k => { try { return sessionStorage.getItem(k); } catch (e) { return null; } },
+    set: (k, v) => { try { v == null ? sessionStorage.removeItem(k) : sessionStorage.setItem(k, v); } catch (e) {} }
+  };
+  const isDir = () => S.user && S.user.role === 'director';
+
+  /* ---------------- API ---------------- */
+  async function api(action, data) { return window.MG_API.call(action, data); }
+  function handleErr(e) {
+    if (e && e.code === 'SESSION_EXPIRED') { toast('Your session expired. Please sign in again.', 'err'); signOut(true); return; }
+    if (e && e.code === 'MUST_CHANGE_PASSWORD') { showChangePassword(true); return; }
+    toast((e && e.message) || String(e), 'err');
+  }
+  async function busy(btn, fn) {
+    const label = btn ? btn.innerHTML : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Please wait…'; }
+    try { return await fn(); } catch (e) { handleErr(e); } finally { if (btn) { btn.disabled = false; btn.innerHTML = label; } }
+  }
+  function toast(msg, kind) {
+    const d = document.createElement('div');
+    d.className = kind || '';
+    d.textContent = msg;
+    $('#toast').appendChild(d);
+    setTimeout(() => d.remove(), kind === 'err' ? 6000 : 3000);
+  }
+
+  /* ---------------- stages helpers ---------------- */
+  function stageInfo(id) {
+    const N = S.stages.length, i = S.stages.findIndex(s => s.id === id);
+    return { idx: i, name: i >= 0 ? S.stages[i].name : '—', pct: N && i >= 0 ? Math.round((i + 1) / N * 100) : 0, invested: N > 0 && i === N - 1 };
+  }
+  const docCount = m => m.docs.filter(id => S.documents.some(d => d.id === id)).length;
+  function fmtDate(d) {
+    if (!d) return '';
+    const p = String(d).split('-').map(Number);
+    if (p.length !== 3 || !p[0]) return d;
+    return new Date(p[0], p[1] - 1, p[2]).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' });
+  }
+
+  /* ---------------- start / login ---------------- */
+  async function start() {
+    if (!window.MG_API || !MG_API.ready) {
+      $('#app').innerHTML = '<div class="login-wrap"><div class="login-card"><div class="eyebrow">Setup needed</div><h1>Almost there</h1>' +
+        '<p>The website is not connected to its database yet. Put the Supabase Project URL and key in <code>config.js</code>.</p>' +
+        '<p><a href="index.html">← Back to public page</a></p></div></div>';
+      return;
+    }
+    try { const j = await api('config'); S.cfg = j; } catch (e) { /* login still works without it */ }
+    let p = null;
+    try { p = await MG_API.session(); } catch (e) {}
+    if (p) {
+      if (p.role === 'member') { location.href = 'profile.html'; return; }
+      try { await loadAll(); return; }
+      catch (e) {
+        if (e.code === 'MUST_CHANGE_PASSWORD') { S.user = S.user || {}; showChangePassword(true); return; }
+        await api('logout').catch(() => {});
+        showLogin(e.message); return;
+      }
+    }
+    showLogin();
+  }
+
+  async function loadAll() {
+    const j = await api('bootstrap');
+    S.user = j.user; S.stages = j.stages; S.documents = j.documents; S.clusters = j.clusters; S.members = j.members; S.settings = j.settings; S.places = j.places || []; S.memberAccounts = j.memberAccounts || []; S.pendingRequests = j.pendingRequests || 0; S.trainings = j.trainings || [];
+    if (!isDir()) F.cluster = '';
+    showMain();
+  }
+
+  function afterLogin(j) {
+    S.user = j.user;
+    if (j.user.role === 'member') { location.href = 'profile.html'; return; }
+    if (j.user.mustChange) showChangePassword(true);
+    else loadAll().catch(handleErr);
+  }
+
+  function showLogin(msg) {
+    const title = S.cfg.siteTitle || 'Master Guide Registry';
+    $('#app').innerHTML = '<div class="login-wrap"><form class="login-card" id="loginForm" autocomplete="on">' +
+      '<img class="login-logo" src="system-mark.svg" alt="" onerror="this.remove()">' +
+      '<div class="eyebrow">Admin</div><h1>' + esc(title) + '</h1><p class="muted small" style="margin-top:4px">Sign in to manage Master Guide records.</p>' +
+      (msg ? '<div class="err">' + esc(msg) + '</div>' : '') +
+      '<div class="field"><label for="lu">Username</label><input id="lu" autocomplete="username" required autocapitalize="none"></div>' +
+      '<div class="field"><label for="lp">Password</label><input id="lp" type="password" autocomplete="current-password" required></div>' +
+      '<button class="btn-primary" style="width:100%;justify-content:center" id="lbtn">Sign in</button>' +
+      '<div class="or">First time here?</div><button type="button" id="goClaim" style="width:100%;justify-content:center">Create my coordinator account</button>' +
+      '<p class="small" style="text-align:center;margin:18px 0 0"><a href="index.html">← Public page</a> · <a href="profile.html">Master Guide? Go to My Profile</a></p><p class="credit">© 2026 All rights reserved · Owned by Davao Mission Master Guide Club</p></form></div>';
+    $('#loginForm').onsubmit = e => {
+      e.preventDefault();
+      busy($('#lbtn'), async () => afterLogin(await api('login', { username: $('#lu').value, password: $('#lp').value })));
+    };
+    $('#goClaim').onclick = showClaim;
+    $('#lu').focus();
+  }
+
+  // staff the Director added in Accounts create their own password here
+  function showClaim() {
+    $('#app').innerHTML = '<div class="login-wrap"><form class="login-card" id="claimForm">' +
+      '<img class="login-logo" src="system-mark.svg" alt="" onerror="this.remove()">' +
+      '<div class="eyebrow">Admin</div><h1>Create my account</h1><p class="muted small" style="margin-top:4px">For Directors and Cluster Coordinators. The Master Guide Director must first add your username in <b>Accounts</b>.</p>' +
+      '<div class="field"><label>Username <span class="muted">(given by the Director)</span></label><input id="cu" autocapitalize="none" required></div>' +
+      '<div class="field"><label>Your full name</label><input id="cn"></div>' +
+      '<div class="field"><label>Choose a password <span class="muted">(8+ characters)</span></label><input id="cp1" type="password" autocomplete="new-password" required></div>' +
+      '<div class="field"><label>Repeat password</label><input id="cp2" type="password" autocomplete="new-password" required></div>' +
+      '<button class="btn-primary" style="width:100%;justify-content:center" id="cbtn">Create account</button>' +
+      '<p class="small" style="text-align:center;margin:14px 0 0"><button type="button" class="btn-link" id="cback">← Back to sign in</button></p></form></div>';
+    $('#cback').onclick = () => showLogin();
+    $('#claimForm').onsubmit = e => {
+      e.preventDefault();
+      if ($('#cp1').value !== $('#cp2').value) return toast('The passwords do not match.', 'err');
+      busy($('#cbtn'), async () => { const j = await api('claimInvite', { username: $('#cu').value, name: $('#cn').value, password: $('#cp1').value }); toast('Account created. Welcome!', 'ok'); afterLogin(j); });
+    };
+    $('#cu').focus();
+  }
+
+  function signOut(silent) {
+    api('logout').catch(() => {});
+    S.user = null;
+    showLogin();
+  }
+
+  function passwordForm(forced) {
+    return (forced ? '' : '<div class="field"><label>Current password</label><input id="pOld" type="password" autocomplete="current-password"></div>') +
+      '<div class="field"><label>New password <span class="muted">(at least 8 characters)</span></label><input id="pNew" type="password" autocomplete="new-password"></div>' +
+      '<div class="field"><label>Repeat new password</label><input id="pNew2" type="password" autocomplete="new-password"></div>';
+  }
+  async function submitPassword(btn, forced) {
+    const nw = $('#pNew').value;
+    if (nw.length < 8) return toast('New password must be at least 8 characters.', 'err');
+    if (nw !== $('#pNew2').value) return toast('The new passwords do not match.', 'err');
+    await busy(btn, async () => {
+      await api('changePassword', { oldPassword: forced ? '' : $('#pOld').value, newPassword: nw });
+      toast('Password changed.', 'ok');
+      if (forced) await loadAll(); else ['#pOld', '#pNew', '#pNew2'].forEach(i => $(i) && ($(i).value = ''));
+    });
+  }
+  function showChangePassword(forced) {
+    $('#app').innerHTML = '<div class="login-wrap"><form class="login-card" id="pwForm">' +
+      '<div class="eyebrow">Security</div><h1>Set a new password</h1>' +
+      '<p class="muted small">For your security, please choose your own password before continuing.</p>' +
+      passwordForm(true) +
+      '<button class="btn-primary" style="width:100%;justify-content:center" id="pbtn">Save password</button>' +
+      '<p class="small" style="text-align:center;margin:14px 0 0"><button type="button" class="btn-link" id="pout">Sign out</button></p></form></div>';
+    $('#pwForm').onsubmit = e => { e.preventDefault(); submitPassword($('#pbtn'), true); };
+    $('#pout').onclick = () => signOut();
+    $('#pNew').focus();
+  }
+
+  /* ---------------- main layout ---------------- */
+  function showMain() {
+    const tabs = [['members', 'Master Guides'], ['requests', 'Requests' + (S.pendingRequests ? ' <span class="badge">' + S.pendingRequests + '</span>' : '')], ['bulletin', 'Bulletin'], ['import', 'Import']];
+    if (isDir()) tabs.push(['stages', 'Stages & Documents'], ['clusters', 'Clusters'], ['accounts', 'Accounts'], ['settings', 'Settings'], ['log', 'Activity Log']);
+    tabs.push(['password', 'My Password']);
+    if (!tabs.some(t => t[0] === S.tab)) S.tab = 'members';
+    const role = isDir() ? 'Director' : 'Coordinator · ' + S.user.cluster;
+    $('#app').innerHTML =
+      '<header class="topbar"><div class="wrap"><div class="brand"><img src="system-mark.svg" alt="" class="brand-logo">' + esc(S.settings.siteTitle || 'Master Guide Registry') + '<small>ADMIN</small></div>' +
+      '<div class="me"><span><b>' + esc(S.user.name) + '</b> · ' + esc(role) + '</span><a class="btn btn-sm" style="background:transparent;color:#fff;border-color:rgba(255,255,255,.35)" href="index.html" target="_blank">Public page ↗</a><button class="btn-sm" id="out">Sign out</button></div></div></header>' +
+      '<nav class="tabs"><div class="wrap">' + tabs.map(t => '<button data-tab="' + t[0] + '" class="' + (t[0] === S.tab ? 'on' : '') + '">' + t[1] + '</button>').join('') + '</div></nav>' +
+      '<main class="wrap view" id="view"></main><footer class="credit" style="padding:0 0 24px">© 2026 All rights reserved · Owned by Davao Mission Master Guide Club</footer>';
+    $('#out').onclick = () => signOut();
+    $('.tabs').onclick = e => {
+      const b = e.target.closest('button[data-tab]'); if (!b) return;
+      S.tab = b.dataset.tab;
+      $$('.tabs button').forEach(x => x.classList.toggle('on', x === b));
+      renderTab();
+    };
+    renderTab();
+  }
+
+  function renderTab() {
+    const v = $('#view');
+    ({ members: viewMembers, requests: viewRequests, bulletin: viewBulletin, import: viewImport, stages: viewStages, clusters: viewClusters, accounts: viewAccounts, settings: viewSettings, log: viewLog, password: viewPassword })[S.tab](v);
+  }
+
+  /* ---------------- Master Guides ---------------- */
+  function viewMembers(v) {
+    v.innerHTML =
+      '<div class="toolbar">' +
+      '<input type="search" id="mq" placeholder="Search name, church, district…" value="' + esc(F.q) + '">' +
+      (isDir() ? '<select id="mc"><option value="">All clusters</option>' + S.clusters.map(c => '<option' + (c === F.cluster ? ' selected' : '') + '>' + esc(c) + '</option>').join('') + '</select>' : '') +
+      '<select id="ms"><option value="">All stages</option>' + S.stages.map(s => '<option value="' + esc(s.id) + '"' + (s.id === F.stage ? ' selected' : '') + '>' + esc(s.name) + '</option>').join('') + '</select>' +
+      '<span class="spacer"></span>' +
+      '<button id="mexp">Export CSV</button><button class="btn-primary" id="madd">+ Add Master Guide</button></div>' +
+      '<div class="result-meta" style="margin-top:0"><span id="mmeta"></span></div>' +
+      '<div class="table-wrap"><table><thead><tr><th>Name</th><th>Church</th><th>District</th>' + (isDir() ? '<th>Cluster</th>' : '') +
+      '<th>Stage</th><th>Progress</th><th>Docs</th><th>Cert.</th></tr></thead><tbody id="mbody"></tbody></table></div>' +
+      '<nav class="pager" id="mpager"></nav>';
+    $('#mq').oninput = e => { F.q = e.target.value; F.page = 1; drawMembers(); };
+    if ($('#mc')) $('#mc').onchange = e => { F.cluster = e.target.value; F.page = 1; drawMembers(); };
+    $('#ms').onchange = e => { F.stage = e.target.value; F.page = 1; drawMembers(); };
+    $('#madd').onclick = () => openMember(null);
+    $('#mexp').onclick = exportCsv;
+    $('#mbody').onclick = e => { const tr = e.target.closest('tr[data-id]'); if (tr) openMember(S.members.find(m => m.id === tr.dataset.id)); };
+    $('#mpager').onclick = e => { const b = e.target.closest('button[data-p]'); if (b) { F.page = Number(b.dataset.p); drawMembers(); window.scrollTo(0, 0); } };
+    drawMembers();
+  }
+
+  function filteredMembers() {
+    const words = F.q.toLowerCase().split(/\s+/).filter(Boolean);
+    return S.members.filter(m => (!F.cluster || m.cluster === F.cluster) && (!F.stage || m.stageId === F.stage) &&
+      words.every(w => (m.fullName + ' ' + m.church + ' ' + m.district + ' ' + m.cluster).toLowerCase().indexOf(w) >= 0))
+      .sort((a, b) => a.fullName.localeCompare(b.fullName));
+  }
+
+  function drawMembers() {
+    const list = filteredMembers();
+    const pages = Math.max(1, Math.ceil(list.length / PER));
+    if (F.page > pages) F.page = pages;
+    const slice = list.slice((F.page - 1) * PER, F.page * PER);
+    const inv = list.filter(m => stageInfo(m.stageId).invested).length;
+    $('#mmeta').textContent = fmt(list.length) + ' Master Guide' + (list.length === 1 ? '' : 's') + ' · ' + fmt(inv) + ' invested' +
+      (list.length > PER ? ' · page ' + F.page + ' of ' + pages : '');
+    $('#mbody').innerHTML = slice.map(m => {
+      const s = stageInfo(m.stageId);
+      return '<tr class="click" data-id="' + esc(m.id) + '"><td><b>' + esc(m.fullName) + '</b></td><td>' + esc(m.church) + '</td><td>' + esc(m.district) + '</td>' +
+        (isDir() ? '<td>' + esc(m.cluster) + '</td>' : '') +
+        '<td><span class="pill ' + (s.invested ? 'done' : '') + '">' + esc(s.name) + '</span></td>' +
+        '<td><div class="progress ' + (s.invested ? 'done' : '') + '"><span style="width:' + s.pct + '%"></span></div>' + s.pct + '%</td>' +
+        '<td class="badge-count">' + docCount(m) + '/' + S.documents.length + '</td>' +
+        '<td>' + (m.hasCert ? '<span class="pill gold">✓ File</span>' : '<span class="muted">—</span>') + '</td></tr>';
+    }).join('') || '<tr><td colspan="8" class="muted" style="text-align:center;padding:30px">No records yet. Click <b>+ Add Master Guide</b> or use the <b>Import</b> tab.</td></tr>';
+    let p = '';
+    if (pages > 1) for (let i = 1; i <= pages; i++) {
+      if (i === 1 || i === pages || Math.abs(i - F.page) <= 2) p += '<button class="btn-sm ' + (i === F.page ? 'on' : '') + '" data-p="' + i + '">' + i + '</button>';
+      else if (Math.abs(i - F.page) === 3) p += '<span class="muted">…</span>';
+    }
+    $('#mpager').innerHTML = p;
+  }
+
+  function openModal(title, body, foot, wide) {
+    const d = $('#modal');
+    d.className = wide ? 'wide' : '';
+    d.innerHTML = '<div class="modal-head"><h2>' + esc(title) + '</h2><button class="x" type="button" aria-label="Close">×</button></div>' +
+      '<div class="modal-body">' + body + '</div>' + (foot ? '<div class="modal-foot">' + foot + '</div>' : '');
+    $('.x', d).onclick = () => d.close();
+    if (!d.open) d.showModal();
+    return d;
+  }
+
+  function datalist(id, values) {
+    return '<datalist id="' + id + '">' + Array.from(new Set(values.filter(Boolean))).sort().map(v => '<option value="' + esc(v) + '">').join('') + '</datalist>';
+  }
+
+  function openMember(m) {
+    const isNew = !m;
+    m = m || { fullName: '', cluster: isDir() ? (F.cluster || S.clusters[0] || '') : S.user.cluster, district: '', church: '', trainingDate: '', investedDate: '', stageId: (S.stages[0] || {}).id, docs: [], hasCert: false };
+    const clusterField = isDir()
+      ? '<select id="fCl">' + S.clusters.map(c => '<option' + (c === m.cluster ? ' selected' : '') + '>' + esc(c) + '</option>').join('') + '</select>'
+      : '<input id="fCl" value="' + esc(m.cluster) + '" disabled>';
+    const body =
+      '<div class="field"><label>Full name *</label><input id="fName" value="' + esc(m.fullName) + '" placeholder="e.g. Juan A. Dela Cruz"></div>' +
+      '<div class="grid2"><div class="field"><label>Cluster *</label>' + clusterField + '</div>' +
+      '<div class="field"><label>District</label><input id="fDi" list="dlDi" value="' + esc(m.district) + '"></div></div>' +
+      '<div class="field"><label>Church</label><input id="fCh" list="dlCh" value="' + esc(m.church) + '"></div>' +
+      datalist('dlDi', S.members.map(x => x.district).concat(S.places.map(x => x.district))) + datalist('dlCh', S.members.map(x => x.church).concat(S.places.map(x => x.church))) +
+      '<div class="grid2"><div class="field"><label>Date of training</label><input id="fTd" type="date" value="' + esc(m.trainingDate) + '"></div>' +
+      '<div class="field"><label>Date invested</label><input id="fInv" type="date" value="' + esc(m.investedDate) + '"></div></div>' +
+      '<div class="grid2"><div class="field"><label>Mobile <span class="muted">(private)</span></label><input id="fPh" inputmode="tel" value="' + esc(m.phone || '') + '"></div>' +
+      '<div class="field"><label>Email <span class="muted">(private)</span></label><input id="fEm" type="email" value="' + esc(m.email || '') + '"></div></div>' +
+      '<div class="field"><label>Progress stage</label><select id="fSt">' + S.stages.map((s, i) => '<option value="' + esc(s.id) + '"' + (s.id === m.stageId ? ' selected' : '') + '>' + (i + 1) + '. ' + esc(s.name) + '</option>').join('') + '</select>' +
+      '<div class="progress" style="margin-top:8px" id="fBar"><span></span></div></div>' +
+      '<div class="field"><label>Document tracker</label><div class="checks">' +
+      (S.documents.map(d => '<label><input type="checkbox" value="' + esc(d.id) + '"' + (m.docs.indexOf(d.id) >= 0 ? ' checked' : '') + '> ' + esc(d.name) + '</label>').join('') || '<span class="muted small">No documents set up yet.</span>') +
+      '</div></div>' +
+      '<div class="field"><label>Certificate <span class="muted">(PDF, JPG or PNG, max 5 MB — private, never shown publicly)</span></label><div class="cert-box">' +
+      (m.hasCert ? '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px"><span class="pill gold">✓ ' + esc(m.certName || 'Certificate') + '</span>' +
+        '<button type="button" class="btn-sm" id="cView">View</button><button type="button" class="btn-sm btn-danger" id="cDel">Remove</button></div><div class="small muted" style="margin-bottom:6px">Upload a new file to replace it:</div>' : '') +
+      '<input type="file" id="fCert" accept="application/pdf,image/jpeg,image/png"></div></div>' +
+      (m.id ? '<div class="field"><label>Personal trainings</label><div id="mTr" class="cert-box"><span class="muted small">Loading…</span></div></div>' : '') +
+      accountBox(m) +
+      (m.updatedAt ? '<p class="small muted">Last updated ' + esc(m.updatedAt) + ' by ' + esc(m.updatedBy) + '</p>' : '');
+    const foot = (isNew ? '' : '<button class="btn-danger left" id="mDel">Delete</button>') + '<button id="mCancel">Cancel</button><button class="btn-primary" id="mSave">' + (isNew ? 'Add Master Guide' : 'Save changes') + '</button>';
+    const d = openModal(isNew ? 'Add Master Guide' : 'Edit Master Guide', body, foot, true);
+
+    const bar = () => { const s = stageInfo($('#fSt').value); const b = $('#fBar'); b.className = 'progress' + (s.invested ? ' done' : ''); $('span', b).style.width = s.pct + '%'; };
+    bar();
+    $('#fSt').onchange = bar;
+    $('#fInv').onchange = () => {
+      const last = S.stages[S.stages.length - 1];
+      if ($('#fInv').value && last && $('#fSt').value !== last.id && confirm('Set the stage to "' + last.name + '" as well?')) { $('#fSt').value = last.id; bar(); }
+    };
+    $('#mCancel').onclick = () => d.close();
+    bindAccountBox(m);
+    if (m.id) loadMemberTrainings(m);
+    if ($('#cView')) $('#cView').onclick = () => viewCert(m);
+    if ($('#cDel')) $('#cDel').onclick = e => {
+      if (!confirm('Remove the certificate file of ' + m.fullName + '?')) return;
+      busy(e.target, async () => { const j = await api('removeCert', { id: m.id }); upsert(j.member); toast('Certificate removed.', 'ok'); openMember(j.member); drawMembers(); });
+    };
+    if ($('#mDel')) $('#mDel').onclick = e => {
+      if (!confirm('Delete ' + m.fullName + ' permanently? This cannot be undone.')) return;
+      busy(e.target, async () => { await api('deleteMember', { id: m.id }); S.members = S.members.filter(x => x.id !== m.id); d.close(); drawMembers(); toast('Deleted.', 'ok'); });
+    };
+    $('#mSave').onclick = e => {
+      const file = $('#fCert').files[0];
+      if (file && file.size > 5 * 1024 * 1024) return toast('The certificate file is larger than 5 MB.', 'err');
+      if (!$('#fName').value.trim()) return toast('Please enter the full name.', 'err');
+      const payload = {
+        id: m.id || '', fullName: $('#fName').value, cluster: $('#fCl').value, district: $('#fDi').value, church: $('#fCh').value,
+        trainingDate: $('#fTd').value, investedDate: $('#fInv').value, stageId: $('#fSt').value, phone: $('#fPh').value, email: $('#fEm').value,
+        docs: $$('.checks input:checked', d).map(x => x.value)
+      };
+      busy(e.target, async () => {
+        let j = await api('saveMember', { member: payload });
+        if (j.duplicate) {
+          if (!confirm(j.message + '\n\nAdd anyway?')) return;
+          j = await api('saveMember', { member: payload, force: true });
+        }
+        upsert(j.member);
+        if (file) {
+          e.target.textContent = 'Uploading certificate…';
+          const data = await fileToBase64(file);
+          const k = await api('uploadCert', { id: j.member.id, name: file.name, mime: file.type, data: data });
+          upsert(k.member);
+        }
+        d.close(); drawMembers();
+        toast(isNew ? 'Master Guide added.' : 'Changes saved.', 'ok');
+      });
+    };
+    $('#fName').focus();
+  }
+
+  /* profile account (Master Guide's own sign-in) shown inside the record */
+  function accountBox(m) {
+    if (!m.id) return '';
+    const a = S.memberAccounts.find(x => x.memberId === m.id);
+    if (!a) return '<div class="field"><label>Profile account</label><div class="cert-box small muted">No profile account yet. ' + esc(m.fullName.split(' ')[0]) + ' can create one at <b>My Profile → Create my profile account</b>; you will see it in <b>Requests</b>.</div></div>';
+    const on = a.active === 'true';
+    return '<div class="field"><label>Profile account</label><div class="cert-box acct"><span><b>' + esc(a.username) + '</b> · ' + (on ? '<span class="pill done">Active</span>' : '<span class="pill off">Disabled</span>') +
+      ' <span class="small muted">last sign-in: ' + esc(a.lastLogin || 'never') + '</span></span><span class="acct-btns"><button type="button" class="btn-sm" id="aReset">Reset password</button>' +
+      '<button type="button" class="btn-sm ' + (on ? 'btn-danger' : '') + '" id="aToggle">' + (on ? 'Disable' : 'Enable') + '</button></span></div></div>';
+  }
+  function bindAccountBox(m) {
+    const a = S.memberAccounts.find(x => x.memberId === m.id); if (!a) return;
+    const done = j => { const i = S.memberAccounts.findIndex(x => x.userId === a.userId); S.memberAccounts[i] = j.account; openMember(S.members.find(x => x.id === m.id)); };
+    $('#aToggle').onclick = e => busy(e.target, async () => { done(await api('setMemberAccount', { userId: a.userId, active: a.active !== 'true' })); toast('Account updated.', 'ok'); });
+    $('#aReset').onclick = e => {
+      const pw = prompt('New temporary password for ' + a.username + ' (at least 8 characters). They will choose their own at next sign-in.');
+      if (!pw) return;
+      busy(e.target, async () => { done(await api('setMemberAccount', { userId: a.userId, password: pw })); toast('Password reset. Tell ' + a.username + ' the temporary password.', 'ok'); });
+    };
+  }
+
+  /* ---------------- personal trainings (inside a record) ---------------- */
+  const trName = t => t.customName || ((S.trainings.find(x => x.id === t.trainingId) || {}).name) || 'Training';
+  const TRS = { verified: ['done', 'Verified'], pending: ['gold', 'Waiting'], rejected: ['off', 'Not accepted'] };
+  async function loadMemberTrainings(m) {
+    try { const j = await api('listMemberTrainings', { memberId: m.id }); drawMemberTrainings(m, j.items); }
+    catch (e) { const el = $('#mTr'); if (el) el.innerHTML = '<span class="err">' + esc(e.message) + '</span>'; }
+  }
+  function drawMemberTrainings(m, items) {
+    const el = $('#mTr'); if (!el) return;
+    el.innerHTML = (items.length ? '<table class="tr-table"><tbody>' + items.map(t => '<tr><td><b>' + esc(trName(t)) + '</b><div class="small muted">' + esc([t.date, t.place].filter(Boolean).join(' · ') || 'no date') + (t.addedBy ? ' · added by ' + esc(t.addedBy) : '') + '</div></td>' +
+      '<td><span class="pill ' + TRS[t.status][0] + '">' + TRS[t.status][1] + '</span></td><td class="tr-act">' +
+      (t.hasCert ? '<button type="button" class="btn-sm" data-tcert="' + esc(t.id) + '">File</button>' : '') +
+      (t.status === 'pending' ? '<button type="button" class="btn-sm btn-primary" data-tok="' + esc(t.id) + '">Verify</button>' : '') +
+      '<button type="button" class="btn-sm btn-danger" data-tdel="' + esc(t.id) + '" title="Delete">✕</button></td></tr>').join('') + '</tbody></table>' : '<p class="small muted" style="margin:0 0 8px">No trainings recorded yet.</p>') +
+      '<details class="tr-add"><summary>+ Add a training (counts as verified)</summary><div class="grid2" style="margin-top:8px"><select id="trId"><option value="">Choose training…</option>' +
+      S.trainings.map(t => '<option value="' + esc(t.id) + '">' + esc(t.name) + '</option>').join('') + '<option value="__other">Other…</option></select><input id="trOther" placeholder="Name (if Other)"></div>' +
+      '<div class="grid2" style="margin-top:8px"><input id="trDate" type="date"><input id="trPlace" placeholder="Venue / organizer"></div>' +
+      '<div class="grid2" style="margin-top:8px;align-items:center"><input type="file" id="trFile" accept="application/pdf,image/jpeg,image/png"><button type="button" class="btn-primary btn-sm" id="trSave">Add training</button></div></details>';
+    el.onclick = e => {
+      const c = e.target.closest('[data-tcert]'), ok = e.target.closest('[data-tok]'), del = e.target.closest('[data-tdel]');
+      if (c) openFile(api('getTrainingCert', { id: c.dataset.tcert }));
+      if (ok) busy(ok, async () => { const j = await api('verifyTraining', { id: ok.dataset.tok, approve: true }); drawMemberTrainings(m, j.items); refreshBadge(); toast('Training verified.', 'ok'); });
+      if (del && confirm('Delete this training entry?')) busy(del, async () => { const j = await api('deleteMemberTraining', { id: del.dataset.tdel }); drawMemberTrainings(m, j.items); refreshBadge(); });
+    };
+    $('#trSave').onclick = e => {
+      const id = $('#trId').value, file = $('#trFile').files[0];
+      if (!id) return toast('Choose a training.', 'err');
+      if (file && file.size > 5 * 1024 * 1024) return toast('File is larger than 5 MB.', 'err');
+      busy(e.target, async () => {
+        const f = file ? { name: file.name, mime: file.type, data: await fileToBase64(file) } : null;
+        const j = await api('saveMemberTraining', { entry: { memberId: m.id, trainingId: id === '__other' ? '' : id, customName: id === '__other' ? $('#trOther').value : '', date: $('#trDate').value, place: $('#trPlace').value }, file: f });
+        drawMemberTrainings(m, j.items); toast('Training added.', 'ok');
+      });
+    };
+  }
+  async function openFile(promise) {
+    const w = window.open('', '_blank');
+    if (w) w.document.write('<p style="font-family:sans-serif;padding:20px">Loading…</p>');
+    try {
+      const j = await promise;
+      const bin = atob(j.data), bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const url = URL.createObjectURL(new Blob([bytes], { type: j.mime }));
+      if (w) w.location.href = url; else { const a = document.createElement('a'); a.href = url; a.download = j.name || 'file'; a.click(); }
+    } catch (e) { if (w) w.close(); handleErr(e); }
+  }
+  async function refreshBadge() { try { const j = await api('listRequests'); setBadge(j.pending.length + (j.trainings || []).length); } catch (e) {} }
+
+  /* ---------------- Bulletin ---------------- */
+  let POSTS = [], showOld = false;
+  async function viewBulletin(v) {
+    v.innerHTML = '<div class="toolbar"><h2 style="font-size:17px">Bulletin board</h2><span class="muted small">' + (isDir() ? 'Post General announcements for the whole Mission, or for one cluster.' : 'Post announcements and activities for ' + esc(S.user.cluster) + '. General posts come from the Director.') + '</span>' +
+      '<span class="spacer"></span><label class="small" style="display:flex;gap:6px;align-items:center;margin:0;font-weight:500"><input type="checkbox" id="bOld" style="width:auto"' + (showOld ? ' checked' : '') + '> Show past / expired</label>' +
+      '<button id="bNewA">+ Announcement</button><button class="btn-primary" id="bNewE">+ Activity</button></div><div id="bList">Loading…</div>';
+    $('#bNewA').onclick = () => openPostEditor({ kind: 'announcement' });
+    $('#bNewE').onclick = () => openPostEditor({ kind: 'event' });
+    $('#bOld').onchange = e => { showOld = e.target.checked; drawPosts(); };
+    try { POSTS = (await api('listPosts')).posts; drawPosts(); } catch (e) { handleErr(e); }
+  }
+  function drawPosts() {
+    if (!$('#bList')) return;
+    const list = POSTS.filter(p => showOld || p.active).sort((a, b) => (b.active - a.active) || (b.pinned - a.pinned) || String(b.updatedAt).localeCompare(String(a.updatedAt)));
+    $('#bList').innerHTML = list.length ? '<div class="table-wrap"><table><thead><tr><th>Title</th><th>Type</th><th>For</th><th>Date / show until</th><th>Status</th><th>By</th></tr></thead><tbody>' +
+      list.map(p => '<tr class="' + (p.canEdit ? 'click' : '') + '" data-pid="' + esc(p.id) + '"><td><b>' + esc(p.title) + '</b>' + (p.pinned ? ' <span class="pill done">Pinned</span>' : '') + '</td>' +
+        '<td>' + (p.kind === 'event' ? 'Activity' : 'Announcement') + '</td><td>' + (p.scope === 'general' ? '<span class="pill gold">General</span>' : '<span class="pill">' + esc(p.scope) + '</span>') + '</td>' +
+        '<td class="small">' + esc(p.kind === 'event' ? (p.eventDate + (p.eventEnd ? ' – ' + p.eventEnd : '')) : (p.expires ? 'until ' + p.expires : 'no end date')) + '</td>' +
+        '<td>' + (p.active ? '<span class="pill done">Showing</span>' : '<span class="pill off">Ended</span>') + '</td><td class="small">' + esc(p.authorName) + (p.canEdit ? '' : ' <span class="muted">(view only)</span>') + '</td></tr>').join('') + '</tbody></table></div>'
+      : '<div class="empty">No posts yet. Click <b>+ Announcement</b> or <b>+ Activity</b>.</div>';
+    $('#bList').onclick = e => { const tr = e.target.closest('tr[data-pid]'); if (!tr) return; const p = POSTS.find(x => x.id === tr.dataset.pid); if (p && p.canEdit) openPostEditor(p); };
+  }
+  function openPostEditor(p) {
+    const isNew = !p.id, ev = p.kind === 'event';
+    const plus = n => { const x = new Date(); x.setDate(x.getDate() + n); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); };
+    const scopeSel = isDir()
+      ? '<select id="pScope"><option value="general"' + (p.scope === 'general' || !p.scope ? ' selected' : '') + '>General (whole Mission)</option>' + S.clusters.map(c => '<option' + (p.scope === c ? ' selected' : '') + '>' + esc(c) + '</option>').join('') + '</select>'
+      : '<input id="pScope" value="' + esc(S.user.cluster) + '" disabled>';
+    const body = '<div class="grid2"><div class="field"><label>Type</label><select id="pKind"><option value="announcement"' + (!ev ? ' selected' : '') + '>Announcement</option><option value="event"' + (ev ? ' selected' : '') + '>Activity / event</option></select></div>' +
+      '<div class="field"><label>For</label>' + scopeSel + '</div></div>' +
+      '<div class="field"><label>Title *</label><input id="pTitle" maxlength="120" value="' + esc(p.title || '') + '" placeholder="' + (ev ? 'e.g. CMT Basic Staff Training' : 'e.g. Submit your requirements by Dec 15') + '"></div>' +
+      '<div id="pEvFields"><div class="grid2"><div class="field"><label>Date *</label><input id="pDate" type="date" value="' + esc(p.eventDate || '') + '"></div><div class="field"><label>End date <span class="muted">(if more than 1 day)</span></label><input id="pEnd" type="date" value="' + esc(p.eventEnd || '') + '"></div></div>' +
+      '<div class="grid2"><div class="field"><label>Time</label><input id="pTime" value="' + esc(p.eventTime || '') + '" placeholder="e.g. 8:00 AM – 5:00 PM"></div><div class="field"><label>Venue</label><input id="pVenue" value="' + esc(p.venue || '') + '" placeholder="e.g. Davao Mission Office"></div></div></div>' +
+      '<div class="field"><label>Message</label><textarea id="pBody" rows="6" placeholder="Details, reminders, what to bring…">' + esc(p.body || '') + '</textarea></div>' +
+      '<div class="field"><label>Link <span class="muted">(optional — registration form, Facebook post…)</span></label><input id="pLink" value="' + esc(p.link || '') + '" placeholder="https://"></div>' +
+      '<div class="grid2"><div class="field" id="pExpWrap"><label>Show until</label><input id="pExp" type="date" value="' + esc(isNew ? plus(30) : (p.expires || '')) + '"><p class="small muted" style="margin:4px 0 0">Leave blank to keep showing.</p></div>' +
+      '<div class="field"><label>&nbsp;</label><div class="checks" style="grid-template-columns:1fr"><label><input type="checkbox" id="pPin"' + (p.pinned ? ' checked' : '') + '> Pin to the top</label></div></div></div>' +
+      '<p class="small muted">Activities disappear automatically after their date. It shows on the public page within a minute.</p>';
+    const foot = (isNew ? '' : '<button class="btn-danger left" id="pDel">Delete</button>') + '<button id="pCancel">Cancel</button><button class="btn-primary" id="pSave">' + (isNew ? 'Post' : 'Save') + '</button>';
+    const d = openModal(isNew ? (ev ? 'New activity' : 'New announcement') : 'Edit post', body, foot, true);
+    const kindUi = () => { const e = $('#pKind').value === 'event'; $('#pEvFields').hidden = !e; $('#pExpWrap').style.visibility = e ? 'hidden' : 'visible'; };
+    kindUi(); $('#pKind').onchange = kindUi;
+    $('#pCancel').onclick = () => d.close();
+    if ($('#pDel')) $('#pDel').onclick = e => { if (confirm('Delete "' + p.title + '"?')) busy(e.target, async () => { POSTS = (await api('deletePost', { id: p.id })).posts; d.close(); drawPosts(); toast('Post deleted.', 'ok'); }); };
+    $('#pSave').onclick = e => {
+      if (!$('#pTitle').value.trim()) return toast('Please enter a title.', 'err');
+      busy(e.target, async () => {
+        const j = await api('savePost', { post: { id: p.id || '', kind: $('#pKind').value, scope: $('#pScope').value, title: $('#pTitle').value, body: $('#pBody').value,
+          eventDate: $('#pDate').value, eventEnd: $('#pEnd').value, eventTime: $('#pTime').value, venue: $('#pVenue').value, link: $('#pLink').value.trim(), expires: $('#pExp').value, pinned: $('#pPin').checked } });
+        POSTS = j.posts; d.close(); drawPosts(); toast(isNew ? 'Posted!' : 'Saved.', 'ok');
+      });
+    };
+    $('#pTitle').focus();
+  }
+
+  /* ---------------- Requests (sign-ups & corrections) ---------------- */
+  const normName = s => String(s || '').toLowerCase().replace(/[^a-z0-9ñ ]+/g, ' ').split(/\s+/).filter(w => w.length > 1);
+  function nameScore(a, b) { const A = normName(a), B = normName(b); if (!A.length || !B.length) return 0; let hit = 0; A.forEach(w => { if (B.indexOf(w) >= 0) hit++; }); return hit / Math.max(A.length, B.length); }
+  async function viewRequests(v) {
+    v.innerHTML = '<div class="sec-head"><h2>Requests</h2><span class="muted small">Sign-ups and corrections from Master Guides' + (isDir() ? '' : ' in ' + esc(S.user.cluster)) + '.</span></div><div id="rq">Loading…</div>';
+    try { const j = await api('listRequests'); drawRequests(j); } catch (e) { handleErr(e); }
+  }
+  function setBadge(n) {
+    S.pendingRequests = n;
+    const b = $('.tabs button[data-tab=requests]'); if (b) b.innerHTML = 'Requests' + (n ? ' <span class="badge">' + n + '</span>' : '');
+  }
+  function drawRequests(j) {
+    if (!$('#rq')) return;
+    j.trainings = j.trainings || [];
+    setBadge(j.pending.length + j.trainings.length);
+    const card = r => {
+      const p = r.payload;
+      if (r.type === 'signup') {
+        const linked = S.memberAccounts.filter(a => a.active === 'true').map(a => a.memberId);
+        const cands = S.members.filter(m => m.cluster === r.cluster && linked.indexOf(m.id) < 0)
+          .map(m => ({ m: m, sc: nameScore(p.fullName, m.fullName) + (m.church && m.church === p.church ? .2 : 0) })).filter(x => x.sc > 0)
+          .sort((a, b) => b.sc - a.sc).slice(0, 15);
+        return '<div class="req card-box" data-id="' + esc(r.id) + '"><div class="req-head"><span class="pill gold">New sign-up</span><span class="small muted">' + esc(r.createdAt) + '</span></div>' +
+          '<h3>' + esc(p.fullName) + '</h3><p class="muted small">' + esc([p.church, p.district, r.cluster].filter(Boolean).join(' · ')) + '</p>' +
+          '<dl class="info"><dt>Username</dt><dd>' + esc(r.username) + '</dd>' + (p.phone ? '<dt>Mobile</dt><dd>' + esc(p.phone) + '</dd>' : '') + (p.email ? '<dt>Email</dt><dd>' + esc(p.email) + '</dd>' : '') + (p.note ? '<dt>Note</dt><dd>' + esc(p.note) + '</dd>' : '') + '</dl>' +
+          '<div class="field"><label>Link to their Master Guide record</label><select class="rLink">' +
+          (cands.length ? '<optgroup label="Possible matches">' + cands.map((x, i) => '<option value="' + esc(x.m.id) + '"' + (i === 0 ? ' selected' : '') + '>' + esc(x.m.fullName + ' — ' + [x.m.church, x.m.district].filter(Boolean).join(', ')) + '</option>').join('') + '</optgroup>' : '') +
+          '<option value=""' + (cands.length ? '' : ' selected') + '>➕ Create a new record for this person</option>' +
+          '<optgroup label="All in ' + esc(r.cluster) + '">' + S.members.filter(m => m.cluster === r.cluster && linked.indexOf(m.id) < 0).sort((a, b) => a.fullName.localeCompare(b.fullName)).slice(0, 500).map(m => '<option value="' + esc(m.id) + '">' + esc(m.fullName) + '</option>').join('') + '</optgroup></select></div>' +
+          reqFoot();
+      }
+      return '<div class="req card-box" data-id="' + esc(r.id) + '"><div class="req-head"><span class="pill">Correction</span><span class="small muted">' + esc(r.createdAt) + '</span></div>' +
+        '<h3>' + esc(p.fullName) + ' <span class="muted small">(' + esc(r.username) + ')</span></h3>' +
+        '<dl class="info"><dt>Field</dt><dd>' + esc(p.label) + '</dd>' + (p.field !== 'other' ? '<dt>Now</dt><dd>' + esc(p.current || '—') + '</dd><dt>Change to</dt><dd class="hl">' + esc(p.value || '—') + '</dd>' : '<dt>Request</dt><dd>' + esc(p.value) + '</dd>') +
+        (p.note ? '<dt>Note</dt><dd>' + esc(p.note) + '</dd>' : '') + '</dl>' +
+        (p.field === 'other' ? '<p class="small muted">Approving only marks it done. Make the change yourself in the record (stage, documents…).</p>' : '<p class="small muted">Approving updates the record automatically.</p>') + reqFoot();
+    };
+    const reqFoot = () => '<div class="field"><label>Reply <span class="muted">(optional, they will see it)</span></label><input class="rReply" placeholder="e.g. Updated, thank you!"></div>' +
+      '<div class="toolbar" style="margin:0"><button class="btn-danger rNo">Reject</button><span class="spacer"></span><button class="btn-primary rYes">Approve</button></div></div>';
+    const past = j.decided.map(r => '<tr><td class="small">' + esc(r.decidedAt) + '</td><td>' + esc(r.type === 'signup' ? 'Sign-up' : 'Correction: ' + (r.payload.label || '')) + '</td><td>' + esc(r.payload.fullName || r.username) + '</td>' +
+      '<td><span class="pill ' + (r.status === 'approved' ? 'done' : 'off') + '">' + esc(r.status) + '</span></td><td class="small">' + esc(r.decidedBy) + '</td><td class="small">' + esc(r.reply) + '</td></tr>').join('');
+    const tcard = t => '<div class="req card-box" data-tid="' + esc(t.id) + '"><div class="req-head"><span class="pill done">Training to verify</span><span class="small muted">' + esc(t.addedAt) + '</span></div>' +
+      '<h3>' + esc(t.fullName) + '</h3><dl class="info"><dt>Training</dt><dd>' + esc(trName(t)) + '</dd><dt>Completed</dt><dd>' + esc(fmtDate(t.date) || '—') + '</dd>' +
+      '<dt>Venue</dt><dd>' + esc(t.place || '—') + '</dd>' + (t.notes ? '<dt>Notes</dt><dd>' + esc(t.notes) + '</dd>' : '') + '</dl>' +
+      (t.hasCert ? '<p><button class="btn-sm tView">View certificate</button></p>' : '<p class="small muted">No certificate attached.</p>') + reqFoot().replace('rYes', 'tYes').replace('rNo', 'tNo');
+    const all = j.pending.map(card).concat(j.trainings.map(tcard));
+    $('#rq').innerHTML = (all.length ? '<div class="req-grid">' + all.join('') + '</div>' : '<div class="empty">No requests waiting. 🎉</div>') +
+      (past ? '<h3 style="margin:22px 0 8px">Recently decided</h3><div class="table-wrap"><table><thead><tr><th>Date</th><th>Type</th><th>Name</th><th>Result</th><th>By</th><th>Reply</th></tr></thead><tbody>' + past + '</tbody></table></div>' : '');
+    $('#rq').onclick = e => {
+      const tv = e.target.closest('.tView'), ty = e.target.closest('.tYes'), tn = e.target.closest('.tNo');
+      if (tv) return openFile(api('getTrainingCert', { id: tv.closest('.req').dataset.tid }));
+      if (ty || tn) {
+        const box = e.target.closest('.req');
+        if (tn && !confirm('Mark this training as not accepted?')) return;
+        return busy(e.target, async () => { await api('verifyTraining', { id: box.dataset.tid, approve: !!ty, reply: $('.rReply', box).value }); drawRequests(await api('listRequests')); toast(ty ? 'Training verified.' : 'Marked as not accepted.', 'ok'); });
+      }
+      const yes = e.target.closest('.rYes'), no = e.target.closest('.rNo'); if (!yes && !no) return;
+      const box = e.target.closest('.req'), id = box.dataset.id, link = $('.rLink', box);
+      if (no && !confirm('Reject this request?')) return;
+      busy(e.target, async () => {
+        const res = await api('decideRequest', { id: id, decision: yes ? 'approve' : 'reject', reply: $('.rReply', box).value, memberId: link ? link.value : '' });
+        const b = await api('bootstrap'); S.members = b.members; S.memberAccounts = b.memberAccounts || [];
+        drawRequests(res); toast(yes ? 'Approved.' : 'Rejected.', 'ok');
+      });
+    };
+  }
+
+  function upsert(m) {
+    const i = S.members.findIndex(x => x.id === m.id);
+    if (i >= 0) S.members[i] = m; else S.members.push(m);
+  }
+
+  function fileToBase64(file) {
+    return new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(String(r.result).split(',')[1] || '');
+      r.onerror = () => rej(new Error('Could not read the file.'));
+      r.readAsDataURL(file);
+    });
+  }
+
+  async function viewCert(m) {
+    const w = window.open('', '_blank');
+    if (w) w.document.write('<p style="font-family:sans-serif;padding:20px">Loading certificate…</p>');
+    try {
+      const j = await api('getCert', { id: m.id });
+      const bin = atob(j.data), bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const url = URL.createObjectURL(new Blob([bytes], { type: j.mime }));
+      if (w) w.location.href = url;
+      else { const a = document.createElement('a'); a.href = url; a.download = j.name || 'certificate'; a.click(); }
+    } catch (e) { if (w) w.close(); handleErr(e); }
+  }
+
+  function csvCell(v) { v = String(v == null ? '' : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }
+  function download(name, text) {
+    const url = URL.createObjectURL(new Blob(['﻿' + text], { type: 'text/csv;charset=utf-8' }));
+    const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
+  function exportCsv() {
+    const rows = [['Full Name', 'Cluster', 'District', 'Church', 'Date of Training', 'Date Invested', 'Stage', 'Progress %', 'Documents Submitted', 'Documents Missing', 'Certificate Uploaded']];
+    filteredMembers().forEach(m => {
+      const s = stageInfo(m.stageId);
+      rows.push([m.fullName, m.cluster, m.district, m.church, m.trainingDate, m.investedDate, s.name, s.pct,
+        S.documents.filter(d => m.docs.indexOf(d.id) >= 0).map(d => d.name).join('; '),
+        S.documents.filter(d => m.docs.indexOf(d.id) < 0).map(d => d.name).join('; '), m.hasCert ? 'Yes' : 'No']);
+    });
+    download('master-guides-' + new Date().toISOString().slice(0, 10) + '.csv', rows.map(r => r.map(csvCell).join(',')).join('\r\n'));
+  }
+
+  /* ---------------- Import ---------------- */
+  let importRows = [];
+  function viewImport(v) {
+    v.innerHTML = '<div class="card-box"><h2>Import many Master Guides at once</h2>' +
+      '<p class="muted">Copy the rows from Excel or Google Sheets and paste them below, or choose a CSV file. Columns must be in this order:</p>' +
+      '<div class="table-wrap" style="box-shadow:none;border:1px solid var(--line);margin-bottom:12px"><table><thead><tr><th>Full Name</th><th>Cluster</th><th>District</th><th>Church</th><th>Date of Training</th><th>Date Invested</th><th>Stage</th></tr></thead>' +
+      '<tbody><tr><td>Juan A. Dela Cruz</td><td>' + esc(S.clusters[0] || 'Cluster 1') + '</td><td>Example District</td><td>Example Church</td><td>2024-03-15</td><td>2025-04-20</td><td>' + esc((S.stages[S.stages.length - 1] || {}).name || '') + '</td></tr></tbody></table></div>' +
+      '<ul class="small muted" style="margin-top:0"><li>A header row is fine — it is skipped automatically.</li>' +
+      '<li>Dates can be 2024-03-15 or 3/15/2024 (month/day/year). Blank is OK.</li>' +
+      '<li>If Stage is blank: people with a Date Invested go to the last stage, others to the first stage.</li>' +
+      (isDir() ? '' : '<li>Cluster can be blank — everyone goes to <b>' + esc(S.user.cluster) + '</b>.</li>') +
+      '<li>Names that already exist in the same cluster are skipped.</li></ul>' +
+      '<div class="toolbar"><input type="file" id="iFile" accept=".csv,text/csv" style="width:auto"><button id="iTpl">Download template</button></div>' +
+      '<textarea id="iText" rows="9" placeholder="Paste rows here…"></textarea>' +
+      '<div class="toolbar" style="margin-top:10px"><button id="iPrev">Preview</button><span class="spacer"></span><button class="btn-primary" id="iGo" disabled>Import</button></div>' +
+      '<div id="iOut"></div></div>';
+    $('#iTpl').onclick = () => download('master-guide-import-template.csv', 'Full Name,Cluster,District,Church,Date of Training,Date Invested,Stage\r\n');
+    $('#iFile').onchange = e => { const f = e.target.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => { $('#iText').value = r.result; preview(); }; r.readAsText(f); };
+    $('#iPrev').onclick = preview;
+    $('#iText').oninput = () => { $('#iGo').disabled = true; };
+    $('#iGo').onclick = e => doImport(e.target);
+  }
+
+  function parseTable(text) {
+    text = text.replace(/^﻿/, '');
+    const delim = text.indexOf('\t') >= 0 ? '\t' : ',';
+    const rows = []; let row = [], cell = '', q = false;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (q) {
+        if (ch === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; }
+        else cell += ch;
+      } else if (ch === '"' && cell === '') q = true;
+      else if (ch === delim) { row.push(cell); cell = ''; }
+      else if (ch === '\n' || ch === '\r') { if (ch === '\r' && text[i + 1] === '\n') i++; row.push(cell); rows.push(row); row = []; cell = ''; }
+      else cell += ch;
+    }
+    if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
+    return rows.filter(r => r.some(c => c.trim() !== ''));
+  }
+  function normDate(s) {
+    s = String(s || '').trim();
+    if (!s) return '';
+    let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    if (m) return m[1] + '-' + m[2].padStart(2, '0') + '-' + m[3].padStart(2, '0');
+    m = s.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})$/);
+    if (m) return m[3] + '-' + m[1].padStart(2, '0') + '-' + m[2].padStart(2, '0');
+    const t = new Date(s);
+    if (!isNaN(t)) return t.getFullYear() + '-' + String(t.getMonth() + 1).padStart(2, '0') + '-' + String(t.getDate()).padStart(2, '0');
+    return s;
+  }
+  function preview() {
+    const rows = parseTable($('#iText').value);
+    if (rows.length && /name/i.test(rows[0][0] || '')) rows.shift();
+    importRows = rows.map(r => ({
+      fullName: (r[0] || '').trim(), cluster: (r[1] || '').trim(), district: (r[2] || '').trim(), church: (r[3] || '').trim(),
+      trainingDate: normDate(r[4]), investedDate: normDate(r[5]), stage: (r[6] || '').trim()
+    }));
+    $('#iGo').disabled = !importRows.length;
+    $('#iOut').innerHTML = importRows.length
+      ? '<p><b>' + fmt(importRows.length) + '</b> row(s) ready. First ' + Math.min(10, importRows.length) + ' shown:</p><div class="table-wrap"><table><thead><tr><th>#</th><th>Name</th><th>Cluster</th><th>District</th><th>Church</th><th>Training</th><th>Invested</th><th>Stage</th></tr></thead><tbody>' +
+        importRows.slice(0, 10).map((r, i) => '<tr><td>' + (i + 1) + '</td><td>' + esc(r.fullName) + '</td><td>' + esc(r.cluster) + '</td><td>' + esc(r.district) + '</td><td>' + esc(r.church) + '</td><td>' + esc(r.trainingDate) + '</td><td>' + esc(r.investedDate) + '</td><td>' + esc(r.stage) + '</td></tr>').join('') +
+        '</tbody></table></div>'
+      : '<p class="muted">Nothing to import yet.</p>';
+  }
+  async function doImport(btn) {
+    if (!importRows.length) return;
+    await busy(btn, async () => {
+      let added = 0; const skipped = [];
+      for (let i = 0; i < importRows.length; i += 500) {
+        btn.textContent = 'Importing ' + Math.min(i + 500, importRows.length) + ' / ' + importRows.length + '…';
+        const j = await api('importMembers', { rows: importRows.slice(i, i + 500), lineOffset: i });
+        added += j.added; skipped.push.apply(skipped, j.skipped);
+      }
+      const b = await api('bootstrap');
+      S.members = b.members;
+      importRows = [];
+      $('#iText').value = '';
+      $('#iOut').innerHTML = '<div class="notice" style="background:var(--green-soft);border-color:#b9dfc6;color:#1d5c33"><b>' + fmt(added) + '</b> Master Guide(s) added.' +
+        (skipped.length ? ' <b>' + skipped.length + '</b> row(s) skipped:' : '') + '</div>' +
+        (skipped.length ? '<div class="table-wrap"><table><thead><tr><th>Row</th><th>Reason</th></tr></thead><tbody>' + skipped.slice(0, 300).map(s => '<tr><td>' + s.line + '</td><td>' + esc(s.reason) + '</td></tr>').join('') + '</tbody></table></div>' : '');
+      toast(fmt(added) + ' imported.', 'ok');
+    });
+    $('#iGo').disabled = true;
+  }
+
+  /* ---------------- list editor (stages, documents, clusters) ---------------- */
+  function listEditor(box, items, opts) {
+    // items: [{key, name}]
+    let list = items.map(x => ({ key: x.key, name: x.name }));
+    const draw = () => {
+      $('.rows', box).innerHTML = list.map((x, i) =>
+        '<div class="row" data-i="' + i + '"><span class="num">' + (i + 1) + '.</span><input value="' + esc(x.name) + '" placeholder="' + esc(opts.placeholder) + '">' +
+        '<button type="button" data-a="up" title="Move up"' + (i === 0 ? ' disabled' : '') + '>↑</button>' +
+        '<button type="button" data-a="down" title="Move down"' + (i === list.length - 1 ? ' disabled' : '') + '>↓</button>' +
+        '<button type="button" data-a="del" class="btn-danger" title="Remove">✕</button></div>').join('') ||
+        '<p class="muted small">Nothing yet.</p>';
+    };
+    box.innerHTML = '<div class="list-editor"><div class="rows"></div></div><div class="toolbar" style="margin:10px 0 0"><button type="button" class="add">+ Add</button><span class="spacer"></span><button type="button" class="btn-primary save">Save</button></div>';
+    draw();
+    $('.rows', box).addEventListener('input', e => { const r = e.target.closest('.row'); if (r) list[Number(r.dataset.i)].name = e.target.value; });
+    $('.rows', box).addEventListener('click', e => {
+      const b = e.target.closest('button[data-a]'); if (!b) return;
+      const i = Number(b.closest('.row').dataset.i);
+      if (b.dataset.a === 'up') [list[i - 1], list[i]] = [list[i], list[i - 1]];
+      if (b.dataset.a === 'down') [list[i + 1], list[i]] = [list[i], list[i + 1]];
+      if (b.dataset.a === 'del') list.splice(i, 1);
+      draw();
+    });
+    $('.add', box).onclick = () => { list.push({ key: '', name: '' }); draw(); const ins = $$('.rows input', box); ins[ins.length - 1].focus(); };
+    $('.save', box).onclick = e => busy(e.target, async () => { await opts.onSave(list.map(x => ({ key: x.key, name: x.name.trim() }))); });
+  }
+
+  function viewStages(v) {
+    v.innerHTML = '<div class="two-col"><div class="card-box"><h2>Progress stages</h2><p class="muted small">In order, from first to last. The <b>last stage means Invested</b> (100%, shown in green). The progress bar fills by stage.</p><div id="stBox"></div></div>' +
+      '<div class="card-box"><h2>Required documents</h2><p class="muted small">These appear as checkboxes on every Master Guide. The public page shows only the count (e.g. "Documents 4/6").</p><div id="docBox"></div></div></div>' +
+      '<div class="card-box" style="max-width:760px"><h2>Trainings list</h2><p class="muted small">Master Guides choose from this list when they add a personal training (they can also type another). Started with the GC Club Ministries Training (CMT) certifications and the older PLA / APLA-PIA awards.</p><div id="trBox"></div></div>';
+    listEditor($('#stBox'), S.stages.map(s => ({ key: s.id, name: s.name })), {
+      placeholder: 'Stage name',
+      onSave: async list => { const j = await api('saveStages', { items: list.map(x => ({ id: x.key, name: x.name })) }); S.stages = j.items; toast('Stages saved.', 'ok'); viewStages(v); }
+    });
+    listEditor($('#trBox'), S.trainings.map(s => ({ key: s.id, name: s.name })), {
+      placeholder: 'Training name',
+      onSave: async list => { const j = await api('saveTrainings', { items: list.map(x => ({ id: x.key, name: x.name })) }); S.trainings = j.items; toast('Trainings list saved.', 'ok'); viewStages(v); }
+    });
+    listEditor($('#docBox'), S.documents.map(s => ({ key: s.id, name: s.name })), {
+      placeholder: 'Document name',
+      onSave: async list => { const j = await api('saveDocuments', { items: list.map(x => ({ id: x.key, name: x.name })) }); S.documents = j.items; toast('Documents saved.', 'ok'); viewStages(v); }
+    });
+  }
+
+  function viewClusters(v) {
+    v.innerHTML = '<div class="card-box" style="max-width:640px"><h2>Clusters</h2><p class="muted small">Renaming a cluster updates all its Master Guides and coordinator accounts. A cluster can only be removed when nobody is assigned to it.</p><div id="clBox"></div></div>';
+    listEditor($('#clBox'), S.clusters.map(c => ({ key: c, name: c })), {
+      placeholder: 'Cluster name',
+      onSave: async list => {
+        const j = await api('saveClusters', { items: list.map(x => ({ old: x.key, name: x.name })) });
+        S.clusters = j.clusters;
+        const b = await api('bootstrap'); S.members = b.members;
+        toast('Clusters saved.', 'ok'); viewClusters(v);
+      }
+    });
+  }
+
+  /* ---------------- Accounts ---------------- */
+  async function viewAccounts(v) {
+    v.innerHTML = '<div class="toolbar"><h2 style="font-size:17px">Accounts</h2><span class="spacer"></span><button class="btn-primary" id="uAdd">+ Add account</button></div><div class="table-wrap"><table><thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Cluster</th><th>Status</th><th>Last sign-in</th></tr></thead><tbody id="uBody"><tr><td colspan="7" class="muted">Loading…</td></tr></tbody></table></div>' +
+      '<p class="small muted">To add a Coordinator or Director: click <b>+ Add account</b> and choose their username. Then tell them to open this admin page and click <b>Create my coordinator account</b> with that username — they choose their own password. Master Guides sign up from <b>My Profile</b> and are approved in <b>Requests</b>.</p>';
+    $('#uAdd').onclick = () => openUser(null);
+    $('#uBody').onclick = e => { const tr = e.target.closest('tr[data-id]'); if (tr) openUser(S.users.find(u => u.id === tr.dataset.id)); };
+    try { S.users = (await api('listUsers')).users; drawUsers(); } catch (e) { handleErr(e); }
+  }
+  function drawUsers() {
+    if (!$('#uBody')) return;
+    $('#uBody').innerHTML = S.users.map(u => '<tr class="click" data-id="' + esc(u.id) + '"><td><b>' + esc(u.name) + '</b></td><td>' + esc(u.username) + '</td>' +
+      '<td><span class="pill ' + (u.role === 'director' ? 'gold' : '') + '">' + (u.role === 'director' ? 'Director' : 'Coordinator') + '</span></td><td>' + esc(u.cluster || 'All') + '</td>' +
+      '<td>' + (u.invited ? '<span class="pill gold">Waiting for sign-up</span>' : u.active ? '<span class="pill done">Active</span>' : '<span class="pill off">Disabled</span>') + (u.mustChange ? ' <span class="small muted">(must change password)</span>' : '') + '</td>' +
+      '<td class="small muted">' + esc(u.lastLogin || 'Never') + '</td></tr>').join('');
+  }
+  function openUser(u) {
+    const isNew = !u;
+    u = u || { name: '', username: '', email: '', role: 'coordinator', cluster: S.clusters[0] || '', active: true };
+    const self = u.id === S.user.id;
+    const body =
+      '<div class="field"><label>Full name</label><input id="uName" value="' + esc(u.name) + '"></div>' +
+      '<div class="field"><label>Username *</label><input id="uUser" value="' + esc(u.username) + '" autocapitalize="none" placeholder="e.g. cluster1mg"' + (isNew ? '' : ' disabled') + '></div>' +
+      '<div class="grid2"><div class="field"><label>Role</label><select id="uRole"' + (self ? ' disabled' : '') + '><option value="coordinator"' + (u.role !== 'director' ? ' selected' : '') + '>Cluster Coordinator</option><option value="director"' + (u.role === 'director' ? ' selected' : '') + '>Master Guide Director</option></select></div>' +
+      '<div class="field" id="uClWrap"><label>Cluster</label><select id="uCl">' + S.clusters.map(c => '<option' + (c === u.cluster ? ' selected' : '') + '>' + esc(c) + '</option>').join('') + '</select></div></div>' +
+      (isNew || u.invited ? '<p class="small muted">After saving, tell this person to open the admin page, click <b>Create my coordinator account</b>, and use the username above. They choose their own password.</p>' :
+      '<div class="field"><label>Reset password <span class="muted">(leave blank to keep the current one)</span></label><input id="uPw" type="text" autocomplete="off"><p class="small muted" style="margin:4px 0 0">They will be asked to change it at next sign-in.</p></div>' +
+      '<div class="checks"><label><input type="checkbox" id="uAct"' + (u.active ? ' checked' : '') + (self ? ' disabled' : '') + '> Account is active (can sign in)</label></div>');
+    const foot = (isNew || self ? '' : '<button class="btn-danger left" id="uDel">Delete</button>') + '<button id="uCancel">Cancel</button><button class="btn-primary" id="uSave">' + (isNew ? 'Create account' : 'Save') + '</button>';
+    const d = openModal(isNew ? 'Add account' : 'Edit account', body, foot);
+    const roleUi = () => { $('#uClWrap').style.visibility = $('#uRole').value === 'director' ? 'hidden' : 'visible'; };
+    roleUi(); $('#uRole').onchange = roleUi;
+    $('#uCancel').onclick = () => d.close();
+    if ($('#uDel')) $('#uDel').onclick = e => {
+      if (!confirm('Delete the account "' + u.username + '"? (Tip: you can just untick "active" instead.)')) return;
+      busy(e.target, async () => { S.users = (await api('deleteUser', { id: u.id })).users; drawUsers(); d.close(); toast('Account deleted.', 'ok'); });
+    };
+    $('#uSave').onclick = e => busy(e.target, async () => {
+      const j = await api('saveUser', { user: { id: u.id || '', name: $('#uName').value, username: $('#uUser').value, role: $('#uRole').value, cluster: $('#uCl').value, active: $('#uAct') ? $('#uAct').checked : true, password: $('#uPw') ? $('#uPw').value : '' } });
+      S.users = j.users; drawUsers(); d.close(); toast(isNew ? 'Account created.' : 'Account saved.', 'ok');
+    });
+  }
+
+  /* ---------------- Settings ---------------- */
+  function viewSettings(v) {
+    const s = S.settings;
+    v.innerHTML = '<div class="card-box" style="max-width:720px"><h2>Website settings</h2><p class="muted small">Changes appear on the public page within a minute.</p>' +
+      '<div class="field"><label>Website title</label><input id="sTitle" value="' + esc(s.siteTitle) + '"></div>' +
+      '<div class="field"><label>Subtitle</label><input id="sSub" value="' + esc(s.subtitle) + '"></div>' +
+      '<div class="checks" style="grid-template-columns:1fr;margin-bottom:16px"><label><input type="checkbox" id="sDocs"' + (s.showDocCount ? ' checked' : '') + '> Show the document count (e.g. "Documents 4/6") on the public page</label></div>' +
+      '<h2 style="margin-top:20px">Backup</h2><p class="muted small">Download everything as Excel-readable files. Do this about once a month and keep the files safe.</p>' +
+      '<p><button type="button" id="sBackup">Download full backup</button></p>' +
+      '<button class="btn-primary" id="sSave">Save settings</button></div>';
+    $('#sSave').onclick = e => busy(e.target, async () => {
+      const j = await api('saveSettings', { settings: { siteTitle: $('#sTitle').value, subtitle: $('#sSub').value, showDocCount: $('#sDocs').checked } });
+      S.settings = j.settings; S.cfg.siteTitle = j.settings.siteTitle;
+      $('.brand').childNodes[1].textContent = S.settings.siteTitle;
+      toast('Settings saved.', 'ok');
+    });
+    $('#sBackup').onclick = e => busy(e.target, async () => {
+      const files = await api('backup');
+      Object.keys(files.tables).forEach((name, i) => setTimeout(() => download('backup-' + name + '-' + new Date().toISOString().slice(0, 10) + '.csv', files.tables[name]), i * 400));
+      toast('Backup downloading (' + Object.keys(files.tables).length + ' files).', 'ok');
+    });
+  }
+
+  async function viewLog(v) {
+    v.innerHTML = '<div class="table-wrap"><table><thead><tr><th>Time</th><th>User</th><th>Action</th><th>Details</th></tr></thead><tbody id="lBody"><tr><td colspan="4" class="muted">Loading…</td></tr></tbody></table></div><p class="small muted">Latest 300 actions. Older entries are kept in the database.</p>';
+    try {
+      const j = await api('getLog');
+      if (!$('#lBody')) return;
+      $('#lBody').innerHTML = j.log.map(l => '<tr><td class="small" style="white-space:nowrap">' + esc(l.time) + '</td><td>' + esc(l.user) + '</td><td>' + esc(l.action) + '</td><td class="small">' + esc(l.detail) + '</td></tr>').join('') || '<tr><td colspan="4" class="muted">No activity yet.</td></tr>';
+    } catch (e) { handleErr(e); }
+  }
+
+  function viewPassword(v) {
+    v.innerHTML = '<form class="card-box" style="max-width:460px" id="myPw"><h2>Change my password</h2><p class="muted small">Signed in as <b>' + esc(S.user.username) + '</b>.</p>' + passwordForm(false) + '<button class="btn-primary" id="myPwBtn">Change password</button></form>';
+    $('#myPw').onsubmit = e => { e.preventDefault(); submitPassword($('#myPwBtn'), false); };
+  }
+
+  start();
+})();
+</script>
+</body>
+</html>
